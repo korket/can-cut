@@ -1,5 +1,8 @@
 import { create } from 'zustand'
-import type { MediaClip, MediaFolder, TimelineItem, TextOverlay, Tool } from '../types'
+import type { MediaClip, MediaFolder, TimelineItem, Transform, Effects, Animation, Transition, KeyframeTrack, Keyframe, TextOverlay, Tool } from '../types'
+import { DEFAULT_TRANSFORM, DEFAULT_EFFECTS, DEFAULT_ANIMATION, DEFAULT_TRANSITION } from '../types'
+
+const KF_SNAP = 50  // ms
 
 interface EditorStore {
   // Media bin
@@ -18,6 +21,12 @@ interface EditorStore {
   timelineItems: TimelineItem[]
   addTimelineItem: (item: TimelineItem) => void
   updateTimelineItem: (id: string, changes: Partial<TimelineItem>) => void
+  updateTransform: (id: string, changes: Partial<Transform>) => void
+  updateEffects: (id: string, changes: Partial<Effects>) => void
+  updateAnimation: (id: string, changes: Partial<Animation>) => void
+  updateTransition: (id: string, changes: Partial<Transition> | null) => void
+  addKeyframe: (itemId: string, property: string, time: number, value: number) => void
+  removeKeyframe: (itemId: string, property: string, time: number) => void
   removeTimelineItem: (id: string) => void
   moveTimelineItem: (id: string, startTime: number, trackIndex: number) => void
 
@@ -41,6 +50,17 @@ interface EditorStore {
   // Active tool
   tool: Tool
   setTool: (t: Tool) => void
+
+  // Default transform (applied automatically to new clips when enabled)
+  defaultTransformEnabled: boolean
+  defaultTransform: Transform
+  setDefaultTransformEnabled: (v: boolean) => void
+  setDefaultTransform: (changes: Partial<Transform>) => void
+  captureDefaultTransform: (t: Transform) => void
+
+  // Project frame rate
+  fps: number
+  setFps: (fps: number) => void
 
   // Timeline zoom (px per second)
   zoom: number
@@ -80,6 +100,64 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
     set((s) => ({
       timelineItems: s.timelineItems.map((i) => (i.id === id ? { ...i, ...changes } : i))
     })),
+  updateTransform: (id, changes) =>
+    set((s) => ({
+      timelineItems: s.timelineItems.map((i) =>
+        i.id === id ? { ...i, transform: { ...DEFAULT_TRANSFORM, ...i.transform, ...changes } } : i
+      )
+    })),
+  updateEffects: (id, changes) =>
+    set((s) => ({
+      timelineItems: s.timelineItems.map((i) =>
+        i.id === id ? { ...i, effects: { ...DEFAULT_EFFECTS, ...i.effects, ...changes } } : i
+      )
+    })),
+  updateAnimation: (id, changes) =>
+    set((s) => ({
+      timelineItems: s.timelineItems.map((i) =>
+        i.id === id ? { ...i, animation: { ...DEFAULT_ANIMATION, ...i.animation, ...changes } } : i
+      )
+    })),
+  updateTransition: (id, changes) =>
+    set((s) => ({
+      timelineItems: s.timelineItems.map((i) =>
+        i.id === id
+          ? { ...i, transitionIn: changes === null ? undefined : { ...DEFAULT_TRANSITION, ...i.transitionIn, ...changes } }
+          : i
+      )
+    })),
+  addKeyframe: (itemId, property, time, value) =>
+    set((s) => ({
+      timelineItems: s.timelineItems.map((i) => {
+        if (i.id !== itemId) return i
+        const tracks: KeyframeTrack[] = i.keyframeTracks ?? []
+        const tIdx = tracks.findIndex(t => t.property === property)
+        const newKf: Keyframe = { time, value, easing: 'linear' }
+        if (tIdx === -1) {
+          return { ...i, keyframeTracks: [...tracks, { property, keyframes: [newKf] }] }
+        }
+        const track = tracks[tIdx]
+        const eIdx = track.keyframes.findIndex(kf => Math.abs(kf.time - time) <= KF_SNAP)
+        const newKfs = eIdx !== -1
+          ? track.keyframes.map((kf, k) => k === eIdx ? { ...kf, value } : kf)
+          : [...track.keyframes, newKf].sort((a, b) => a.time - b.time)
+        return { ...i, keyframeTracks: tracks.map((t, k) => k === tIdx ? { ...t, keyframes: newKfs } : t) }
+      })
+    })),
+
+  removeKeyframe: (itemId, property, time) =>
+    set((s) => ({
+      timelineItems: s.timelineItems.map((i) => {
+        if (i.id !== itemId) return i
+        const tracks = (i.keyframeTracks ?? [])
+          .map(t => t.property !== property ? t : {
+            ...t, keyframes: t.keyframes.filter(kf => Math.abs(kf.time - time) > KF_SNAP)
+          })
+          .filter(t => t.keyframes.length > 0)
+        return { ...i, keyframeTracks: tracks.length > 0 ? tracks : undefined }
+      })
+    })),
+
   removeTimelineItem: (id) =>
     set((s) => ({ timelineItems: s.timelineItems.filter((i) => i.id !== id) })),
   moveTimelineItem: (id, startTime, trackIndex) =>
@@ -109,6 +187,15 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
   tool: 'select',
   setTool: (t) => set({ tool: t }),
+
+  defaultTransformEnabled: false,
+  defaultTransform: { ...DEFAULT_TRANSFORM },
+  setDefaultTransformEnabled: (v) => set({ defaultTransformEnabled: v }),
+  setDefaultTransform: (changes) => set((s) => ({ defaultTransform: { ...s.defaultTransform, ...changes } })),
+  captureDefaultTransform: (t) => set({ defaultTransform: { ...t } }),
+
+  fps: 30,
+  setFps: (fps) => set({ fps }),
 
   zoom: 100,
   setZoom: (z) => set({ zoom: Math.max(20, Math.min(500, z)) }),

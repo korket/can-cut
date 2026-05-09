@@ -1,8 +1,10 @@
-import { useRef, useCallback, useEffect, useState } from 'react'
+import { useRef, useCallback, useEffect, useState, Fragment } from 'react'
 import { useEditorStore } from '../store/useEditorStore'
 import { importAndAddClips } from '../utils/importClip'
 import { nanoid } from '../utils/nanoid'
 import { getWaveform } from '../utils/waveform'
+import { snapToFrame, frameDurationMs } from '../utils/frame'
+import { allKeyframeTimes } from '../utils/keyframes'
 
 const TRACK_HEIGHT = 44
 const RULER_HEIGHT = 24
@@ -21,7 +23,8 @@ export default function Timeline() {
     clips, timelineItems, removeTimelineItem, updateTimelineItem,
     currentTime, setCurrentTime, setIsPlaying,
     tool, zoom, setZoom, getTimelineDuration,
-    videoTrackCount, audioTrackCount, addVideoTrack, addAudioTrack
+    videoTrackCount, audioTrackCount, addVideoTrack, addAudioTrack,
+    selectedId, setSelectedId, fps,
   } = useEditorStore()
 
   const containerRef = useRef<HTMLDivElement>(null)   // tracks scroll area
@@ -33,8 +36,11 @@ export default function Timeline() {
   const msToPx = (ms: number) => ms * pxPerMs
   const pxToMs = (px: number) => px / pxPerMs
 
-  const [trackHeights, setTrackHeights] = useState<Record<number, number>>({})
+  const [trackHeights, setTrackHeights] = useState<Record<number, number>>(() => {
+    try { return JSON.parse(localStorage.getItem('layout:trackHeights') ?? '{}') } catch { return {} }
+  })
   function getTrackH(idx: number) { return trackHeights[idx] ?? TRACK_HEIGHT }
+  useEffect(() => { localStorage.setItem('layout:trackHeights', JSON.stringify(trackHeights)) }, [trackHeights])
 
   const totalTracks = videoTrackCount + audioTrackCount
   let totalHeight = SECTION_H * 2
@@ -45,10 +51,21 @@ export default function Timeline() {
     return isAudioTrack(idx) ? clipType === 'audio' : clipType !== 'audio'
   }
 
-  // Ruler ticks
+  // Ruler ticks — second-level major ticks + frame-level minor ticks when zoomed in
   const tickInterval = zoom < 50 ? 10000 : zoom < 120 ? 5000 : zoom < 300 ? 2000 : 1000
   const ticks: number[] = []
   for (let t = 0; t <= duration; t += tickInterval) ticks.push(t)
+
+  const framePx = zoom / fps                     // px per frame
+  const showFrameTicks = framePx >= 6            // only when frames are visible
+  const frameTicks: number[] = []
+  if (showFrameTicks) {
+    const fDur = frameDurationMs(fps)
+    const maxFrameTicks = Math.ceil(duration / fDur)
+    if (maxFrameTicks <= 4000) {
+      for (let f = 0; f * fDur <= duration; f++) frameTicks.push(f * fDur)
+    }
+  }
 
   // ── Snapping ───────────────────────────────────────────────────────────────
   const [snapEnabled, setSnapEnabled] = useState(true)
@@ -78,6 +95,7 @@ export default function Timeline() {
 
   function onClipMouseDown(e: React.MouseEvent, itemId: string) {
     e.preventDefault(); e.stopPropagation()
+    setSelectedId(itemId)
     const item = timelineItems.find(i => i.id === itemId)!
     dragState.current = { id: itemId, startX: e.clientX, origStart: item.startTime, origTrack: item.trackIndex }
   }
@@ -85,7 +103,8 @@ export default function Timeline() {
   const onMouseMove = useCallback((e: MouseEvent) => {
     if (!dragState.current) return
     const { id, startX, origStart, origTrack } = dragState.current
-    const rawStart = Math.max(0, origStart + pxToMs(e.clientX - startX))
+    const { fps: curFps } = useEditorStore.getState()
+    const rawStart = snapToFrame(Math.max(0, origStart + pxToMs(e.clientX - startX)), curFps)
     const snapped = trySnap(rawStart, id)
     const trackEl = document.elementFromPoint(e.clientX, e.clientY)?.closest('[data-track]') as HTMLElement | null
     const candidate = trackEl ? parseInt(trackEl.dataset.track!) : origTrack
@@ -115,20 +134,22 @@ export default function Timeline() {
   const onResizeMove = useCallback((e: MouseEvent) => {
     if (!resizeState.current) return
     const { id, edge, startX, origTrimStart, origTrimEnd, origItemStart } = resizeState.current
+    const { fps: curFps } = useEditorStore.getState()
+    const minDur = frameDurationMs(curFps)
     const dx = pxToMs(e.clientX - startX)
     const item = timelineItems.find(i => i.id === id)
     if (!item) return
     const clip = useEditorStore.getState().clips.find(c => c.id === item.clipId)
     if (!clip) return
     if (edge === 'right') {
-      const rawEnd = item.startTime + Math.min(clip.duration - item.trimStart, Math.max(200, origTrimEnd - origTrimStart + dx))
-      const snappedEnd = trySnap(rawEnd, id)
-      updateTimelineItem(id, { trimEnd: Math.min(clip.duration, origTrimStart + Math.max(200, snappedEnd - item.startTime)) })
+      const rawEnd = item.startTime + Math.min(clip.duration - item.trimStart, Math.max(minDur, origTrimEnd - origTrimStart + dx))
+      const snappedEnd = trySnap(snapToFrame(rawEnd, curFps), id)
+      updateTimelineItem(id, { trimEnd: Math.min(clip.duration, origTrimStart + Math.max(minDur, snappedEnd - item.startTime)) })
     } else {
-      const rawStart = Math.max(0, origItemStart + dx)
+      const rawStart = snapToFrame(Math.max(0, origItemStart + dx), curFps)
       const snappedStart = trySnap(rawStart, id)
       const delta = snappedStart - origItemStart
-      const newTrimStart = Math.max(0, Math.min(origTrimEnd - 200, origTrimStart + delta))
+      const newTrimStart = Math.max(0, Math.min(origTrimEnd - minDur, origTrimStart + delta))
       updateTimelineItem(id, { trimStart: newTrimStart, startTime: Math.max(0, origItemStart + (newTrimStart - origTrimStart)) })
     }
   }, [pxPerMs, timelineItems, snapEnabled, currentTime])
@@ -156,13 +177,28 @@ export default function Timeline() {
     if (!containerRef.current) return
     const rect = containerRef.current.getBoundingClientRect()
     const x = clientX - rect.left + containerRef.current.scrollLeft
-    setCurrentTime(Math.max(0, Math.min(pxToMs(x), getTimelineDuration())))
+    const raw = Math.max(0, Math.min(pxToMs(x), getTimelineDuration()))
+
+    const { timelineItems: items, fps: currentFps } = useEditorStore.getState()
+    let snapped = raw
+    if (snapEnabled) {
+      const threshMs = pxToMs(SNAP_PX)
+      let bestDist = threshMs
+      for (const item of items) {
+        const end = item.startTime + (item.trimEnd - item.trimStart)
+        for (const pt of [0, item.startTime, end]) {
+          const d = Math.abs(pt - raw)
+          if (d < bestDist) { bestDist = d; snapped = pt }
+        }
+      }
+    }
+    setCurrentTime(snapToFrame(snapped, currentFps))
   }
 
   const onScrubMove = useCallback((e: MouseEvent) => {
     if (!scrubbing.current) return
     seekToX(e.clientX)
-  }, [pxPerMs])
+  }, [pxPerMs, snapEnabled])
 
   const onScrubUp = useCallback(() => { scrubbing.current = false; document.body.style.cursor = '' }, [])
 
@@ -215,14 +251,18 @@ export default function Timeline() {
   async function handleTrackDrop(e: React.DragEvent, trackIdx: number) {
     e.preventDefault(); setDragOverTrack(null)
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-    let dropTime = Math.max(0, pxToMs(e.clientX - rect.left + (containerRef.current?.scrollLeft ?? 0)))
-    const { addTimelineItem, clips } = useEditorStore.getState()
+    let dropTime = snapToFrame(Math.max(0, pxToMs(e.clientX - rect.left + (containerRef.current?.scrollLeft ?? 0))), useEditorStore.getState().fps)
+    const { addTimelineItem, clips, defaultTransformEnabled, defaultTransform } = useEditorStore.getState()
+
+    function defTransform(clipType: string) {
+      return defaultTransformEnabled && clipType !== 'audio' ? { transform: { ...defaultTransform } } : {}
+    }
 
     const clipId = e.dataTransfer.getData('text/x-clip-id')
     if (clipId) {
       const clip = clips.find(c => c.id === clipId)
       if (clip && clipFitsTrack(clip.type, trackIdx))
-        addTimelineItem({ id: nanoid(), clipId: clip.id, trackIndex: trackIdx, startTime: dropTime, trimStart: 0, trimEnd: clip.duration })
+        addTimelineItem({ id: nanoid(), clipId: clip.id, trackIndex: trackIdx, startTime: dropTime, trimStart: 0, trimEnd: clip.duration, ...defTransform(clip.type) })
       return
     }
 
@@ -231,7 +271,7 @@ export default function Timeline() {
     const imported = await importAndAddClips(paths)
     for (const clip of imported) {
       if (!clipFitsTrack(clip.type, trackIdx)) continue
-      addTimelineItem({ id: nanoid(), clipId: clip.id, trackIndex: trackIdx, startTime: dropTime, trimStart: 0, trimEnd: clip.duration })
+      addTimelineItem({ id: nanoid(), clipId: clip.id, trackIndex: trackIdx, startTime: dropTime, trimStart: 0, trimEnd: clip.duration, ...defTransform(clip.type) })
       dropTime += clip.duration
     }
   }
@@ -304,6 +344,14 @@ export default function Timeline() {
           {/* Ruler — scrolls horizontally in sync, fixed vertically */}
           <div style={styles.rulerContainer} ref={rulerRef}>
             <div style={{ position: 'relative', width: msToPx(duration), height: RULER_HEIGHT }} onMouseDown={startScrub}>
+              {/* Frame-level ticks */}
+              {frameTicks.map(t => (
+                <div key={t} style={{ position: 'absolute', left: msToPx(t), top: 0, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                  <div style={{ width: 1, height: framePx >= 18 ? 5 : 3, background: '#383838' }} />
+                  {framePx >= 22 && <span style={{ fontSize: 8, color: '#3a3a3a', marginTop: 1, userSelect: 'none', whiteSpace: 'nowrap' }}>{Math.round(t * fps / 1000)}</span>}
+                </div>
+              ))}
+              {/* Second-level major ticks */}
               {ticks.map(t => (
                 <div key={t} style={{ ...styles.tick, left: msToPx(t) }}>
                   <div style={styles.tickLine} />
@@ -326,7 +374,7 @@ export default function Timeline() {
                 const trackIdx = videoTrackCount - 1 - i
                 return (
                   <TrackRow key={trackIdx} trackIdx={trackIdx} trackHeight={getTrackH(trackIdx)} clips={clips} timelineItems={timelineItems} msToPx={msToPx}
-                    dragOverTrack={dragOverTrack} onClipMouseDown={onClipMouseDown}
+                    dragOverTrack={dragOverTrack} selectedId={selectedId} setSelectedId={setSelectedId} onClipMouseDown={onClipMouseDown}
                     onResizeMouseDown={onResizeMouseDown} removeTimelineItem={removeTimelineItem}
                     handleTrackDrop={handleTrackDrop} handleTrackDragOver={handleTrackDragOver}
                     handleTrackDragLeave={handleTrackDragLeave} />
@@ -339,7 +387,7 @@ export default function Timeline() {
               </div>
               {Array.from({ length: audioTrackCount }).map((_, i) => (
                 <TrackRow key={i} trackIdx={videoTrackCount + i} trackHeight={getTrackH(videoTrackCount + i)} clips={clips} timelineItems={timelineItems} msToPx={msToPx}
-                  dragOverTrack={dragOverTrack} onClipMouseDown={onClipMouseDown}
+                  dragOverTrack={dragOverTrack} selectedId={selectedId} setSelectedId={setSelectedId} onClipMouseDown={onClipMouseDown}
                   onResizeMouseDown={onResizeMouseDown} removeTimelineItem={removeTimelineItem}
                   handleTrackDrop={handleTrackDrop} handleTrackDragOver={handleTrackDragOver}
                   handleTrackDragLeave={handleTrackDragLeave} />
@@ -364,10 +412,11 @@ export default function Timeline() {
 }
 
 // ── WaveformBars ─────────────────────────────────────────────────────────────
-function WaveformBars({ path, trimStart, trimEnd, duration }: {
-  path: string; trimStart: number; trimEnd: number; duration: number
+function WaveformBars({ path, trimStart, trimEnd, duration, volume }: {
+  path: string; trimStart: number; trimEnd: number; duration: number; volume: number
 }) {
-  const [waveform, setWaveform] = useState<number[] | null>(null)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const [waveform, setWaveform] = useState<import('../utils/waveform').WaveformData | null>(null)
 
   useEffect(() => {
     let active = true
@@ -375,27 +424,70 @@ function WaveformBars({ path, trimStart, trimEnd, duration }: {
     return () => { active = false }
   }, [path])
 
-  if (!waveform) return null
+  const draw = useCallback(() => {
+    const canvas = canvasRef.current
+    if (!canvas || !waveform) return
+    const rect = canvas.getBoundingClientRect()
+    if (!rect.width || !rect.height) return
+    const dpr = window.devicePixelRatio || 1
+    canvas.width  = Math.round(rect.width  * dpr)
+    canvas.height = Math.round(rect.height * dpr)
+    const ctx = canvas.getContext('2d')!
+    const W = canvas.width, H = canvas.height, mid = H / 2
 
-  const startIdx = Math.floor((trimStart / duration) * waveform.length)
-  const endIdx   = Math.ceil((trimEnd   / duration) * waveform.length)
-  const slice    = waveform.slice(startIdx, endIdx)
-  const n        = slice.length
-  const svgH     = 100
-  const mid      = svgH / 2
-  const d        = slice.map((v, i) => {
-    const h = Math.max(2, v * svgH * 0.88)
-    return `M${i + 0.5},${mid - h / 2}v${h}`
-  }).join(' ')
+    ctx.clearRect(0, 0, W, H)
+
+    const totalSamples = waveform.length
+    const s0 = Math.floor((trimStart / duration) * totalSamples)
+    const s1 = Math.ceil( (trimEnd   / duration) * totalSamples)
+    const span = Math.max(1, s1 - s0)
+
+    // Draw per-pixel column: peak (wide, faint) + RMS (narrower, bright)
+    for (let x = 0; x < W; x++) {
+      const lo = s0 + Math.floor( (x / W)       * span)
+      const hi = s0 + Math.floor(((x + 1) / W)  * span)
+
+      let maxPeak = 0, sumRms = 0, count = 0
+      for (let i = lo; i < Math.min(hi + 1, totalSamples); i++) {
+        if (waveform.peaks[i] > maxPeak) maxPeak = waveform.peaks[i]
+        sumRms += waveform.rms[i] * waveform.rms[i]
+        count++
+      }
+      const rmsVal = count > 0 ? Math.sqrt(sumRms / count) : 0
+
+      const volScale = Math.min(2, volume / 100)
+
+      // Peak layer
+      const pH = Math.max(1, Math.min(mid - 1, maxPeak * (mid - 1) * 0.96 * volScale))
+      ctx.fillStyle = 'rgba(90, 190, 255, 0.28)'
+      ctx.fillRect(x, mid - pH, 1, pH * 2)
+
+      // RMS layer (brighter, slightly narrower)
+      const rH = Math.max(1, Math.min(mid - 1, rmsVal * (mid - 1) * 0.96 * volScale))
+      ctx.fillStyle = 'rgba(160, 220, 255, 0.90)'
+      ctx.fillRect(x, mid - rH, 1, rH * 2)
+    }
+
+    // Center line
+    ctx.fillStyle = 'rgba(120, 200, 255, 0.25)'
+    ctx.fillRect(0, mid - 0.5, W, 1)
+  }, [waveform, trimStart, trimEnd, duration, volume])
+
+  useEffect(() => { draw() }, [draw])
+
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const obs = new ResizeObserver(draw)
+    obs.observe(canvas)
+    return () => obs.disconnect()
+  }, [draw])
 
   return (
-    <svg
-      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
-      viewBox={`0 0 ${n} ${svgH}`}
-      preserveAspectRatio="none"
-    >
-      <path d={d} stroke="rgba(90,190,255,0.55)" strokeWidth="1.2" fill="none" />
-    </svg>
+    <canvas
+      ref={canvasRef}
+      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block', pointerEvents: 'none' }}
+    />
   )
 }
 
@@ -407,6 +499,8 @@ interface TrackRowProps {
   timelineItems: any[]
   msToPx: (ms: number) => number
   dragOverTrack: number | null
+  selectedId: string | null
+  setSelectedId: (id: string | null) => void
   onClipMouseDown: (e: React.MouseEvent, id: string) => void
   onResizeMouseDown: (e: React.MouseEvent, id: string, edge: 'left' | 'right') => void
   removeTimelineItem: (id: string) => void
@@ -415,7 +509,7 @@ interface TrackRowProps {
   handleTrackDragLeave: (e: React.DragEvent) => void
 }
 
-function TrackRow({ trackIdx, trackHeight, clips, timelineItems, msToPx, dragOverTrack, onClipMouseDown, onResizeMouseDown, removeTimelineItem, handleTrackDrop, handleTrackDragOver, handleTrackDragLeave }: TrackRowProps) {
+function TrackRow({ trackIdx, trackHeight, clips, timelineItems, msToPx, dragOverTrack, selectedId, setSelectedId, onClipMouseDown, onResizeMouseDown, removeTimelineItem, handleTrackDrop, handleTrackDragOver, handleTrackDragLeave }: TrackRowProps) {
   return (
     <div
       data-track={trackIdx}
@@ -423,26 +517,88 @@ function TrackRow({ trackIdx, trackHeight, clips, timelineItems, msToPx, dragOve
       onDrop={e => handleTrackDrop(e, trackIdx)}
       onDragOver={e => handleTrackDragOver(e, trackIdx)}
       onDragLeave={handleTrackDragLeave}
+      onMouseDown={() => setSelectedId(null)}
     >
       {timelineItems.filter(i => i.trackIndex === trackIdx).map(item => {
         const clip = clips.find(c => c.id === item.clipId)
         if (!clip) return null
         const bg = clip.type === 'audio' ? '#152b3d' : clip.type === 'image' ? '#2d1f0e' : '#0f2d1a'
         const border = clip.type === 'audio' ? '#2a7abf' : clip.type === 'image' ? '#bf8a2a' : '#2abf5a'
+        const isSelected = selectedId === item.id
+
+        // Detect adjacent previous clip for transition chip (video/image only)
+        const prevItem = clip.type !== 'audio' ? timelineItems.find(i =>
+          i.trackIndex === trackIdx && i.id !== item.id &&
+          Math.abs((i.startTime + (i.trimEnd - i.trimStart)) - item.startTime) < 500
+        ) : null
+        const hasTr = !!item.transitionIn && item.transitionIn.type !== 'cut'
+
         return (
-          <div
-            key={item.id}
-            style={{ ...styles.clip, left: msToPx(item.startTime), width: Math.max(msToPx(item.trimEnd - item.trimStart), 4), height: trackHeight - 6, background: bg, borderColor: border }}
-            onMouseDown={e => onClipMouseDown(e, item.id)}
-          >
-            {clip.type === 'audio' && (
-              <WaveformBars path={clip.path} trimStart={item.trimStart} trimEnd={item.trimEnd} duration={clip.duration} />
+          <Fragment key={item.id}>
+            {/* Transition chip — sits at the junction between two adjacent clips */}
+            {prevItem && (
+              <div
+                style={{
+                  position: 'absolute', zIndex: 6,
+                  left: msToPx(item.startTime) - 9,
+                  top: '50%', transform: 'translateY(-50%)',
+                  width: 18, height: 18,
+                  background: hasTr ? '#2d1560' : '#1e1e1e',
+                  border: `1px solid ${hasTr ? '#7040e0' : '#383838'}`,
+                  borderRadius: 3, cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}
+                onMouseDown={e => { e.stopPropagation(); setSelectedId(item.id) }}
+                title={hasTr ? item.transitionIn!.type : 'Click to add transition'}
+              >
+                <span style={{ fontSize: 9, color: hasTr ? '#a080ff' : '#555', pointerEvents: 'none', lineHeight: 1 }}>⟨⟩</span>
+              </div>
             )}
-            <div style={styles.resizeL} onMouseDown={e => onResizeMouseDown(e, item.id, 'left')} />
-            <span style={styles.clipLabel} title={clip.name}>{clip.name}</span>
-            <div style={styles.resizeR} onMouseDown={e => onResizeMouseDown(e, item.id, 'right')} />
-            <button style={styles.clipDel} onMouseDown={e => e.stopPropagation()} onClick={() => removeTimelineItem(item.id)}>×</button>
-          </div>
+
+            <div
+              style={{ ...styles.clip, left: msToPx(item.startTime), width: Math.max(msToPx(item.trimEnd - item.trimStart), 4), height: trackHeight - 6, background: bg, borderColor: border, outline: isSelected ? '2px solid #fff' : 'none', outlineOffset: -1 }}
+              onMouseDown={e => onClipMouseDown(e, item.id)}
+            >
+              {clip.type === 'audio' && (
+                <WaveformBars path={clip.path} trimStart={item.trimStart} trimEnd={item.trimEnd} duration={clip.duration} volume={item.volume ?? 100} />
+              )}
+              <div style={styles.resizeL} onMouseDown={e => onResizeMouseDown(e, item.id, 'left')} />
+              <span style={styles.clipLabel} title={clip.name}>{clip.name}</span>
+              <div style={styles.resizeR} onMouseDown={e => onResizeMouseDown(e, item.id, 'right')} />
+              <button style={styles.clipDel} onMouseDown={e => e.stopPropagation()} onClick={() => removeTimelineItem(item.id)}>×</button>
+
+              {/* Keyframe indicator bar + diamonds */}
+              {item.keyframeTracks && item.keyframeTracks.length > 0 && (() => {
+                const clipDur = item.trimEnd - item.trimStart
+                const times = allKeyframeTimes(item.keyframeTracks)
+                return (
+                  <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 10, pointerEvents: 'none' }}>
+                    <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 2, background: 'rgba(255,204,0,0.35)' }} />
+                    {isSelected && times.map(t => (
+                      <div
+                        key={t}
+                        style={{
+                          position: 'absolute',
+                          left: `${Math.min(100, (t / clipDur) * 100)}%`,
+                          top: '50%',
+                          transform: 'translate(-50%, -50%) rotate(45deg)',
+                          width: 7, height: 7,
+                          background: '#ffcc00',
+                          boxShadow: '0 0 3px rgba(0,0,0,0.6)',
+                          cursor: 'pointer',
+                          pointerEvents: 'all',
+                        }}
+                        onMouseDown={ev => {
+                          ev.stopPropagation()
+                          useEditorStore.getState().setCurrentTime(item.startTime + t)
+                        }}
+                      />
+                    ))}
+                  </div>
+                )
+              })()}
+            </div>
+          </Fragment>
         )
       })}
     </div>
@@ -452,12 +608,12 @@ function TrackRow({ trackIdx, trackHeight, clips, timelineItems, msToPx, dragOve
 // ── Styles ──────────────────────────────────────────────────────────────────
 const styles: Record<string, React.CSSProperties> = {
   wrapper:      { display: 'flex', flexDirection: 'column', height: '100%', background: '#161616', overflow: 'hidden' },
-  toolbar:      { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '5px 12px', borderBottom: '1px solid #2a2a2a', flexShrink: 0 },
-  toolbarLabel: { fontSize: 12, color: '#888', fontWeight: 600 },
-  zoomRow:      { display: 'flex', alignItems: 'center', gap: 6 },
-  zoomBtn:      { background: '#2a2a2a', border: 'none', color: '#ccc', width: 22, height: 22, borderRadius: 4, cursor: 'pointer', fontSize: 14 },
-  zoomLabel:    { fontSize: 11, color: '#666', minWidth: 50, textAlign: 'center' },
-  snapBtn:      { background: '#2a2a2a', border: '1px solid #444', color: '#888', padding: '2px 8px', borderRadius: 4, cursor: 'pointer', fontSize: 11, marginLeft: 4 },
+  toolbar:      { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '7px 14px', borderBottom: '1px solid #2a2a2a', flexShrink: 0 },
+  toolbarLabel: { fontSize: 13, color: '#888', fontWeight: 600 },
+  zoomRow:      { display: 'flex', alignItems: 'center', gap: 7 },
+  zoomBtn:      { background: '#2a2a2a', border: 'none', color: '#ccc', width: 26, height: 26, borderRadius: 5, cursor: 'pointer', fontSize: 16 },
+  zoomLabel:    { fontSize: 12, color: '#666', minWidth: 58, textAlign: 'center' },
+  snapBtn:      { background: '#2a2a2a', border: '1px solid #444', color: '#888', padding: '3px 10px', borderRadius: 5, cursor: 'pointer', fontSize: 12, marginLeft: 5 },
   snapActive:   { borderColor: '#2abf5a', color: '#2abf5a' },
 
   body:         { display: 'flex', flex: 1, overflow: 'hidden', minHeight: 0 },
@@ -467,11 +623,11 @@ const styles: Record<string, React.CSSProperties> = {
   rulerSpacer:  { height: RULER_HEIGHT, flexShrink: 0, borderBottom: '1px solid #2a2a2a' },
   sectionHead:  { height: SECTION_H, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 6px 0 8px', background: '#0e0e0e', borderBottom: '1px solid #222', flexShrink: 0 },
   sectionHeadAudio: { borderTop: '2px solid #252525' },
-  sectionLabel: { fontSize: 9, fontWeight: 700, letterSpacing: 1, color: '#2abf5a' },
-  addTrackBtn:  { background: 'none', border: '1px solid #333', color: '#666', width: 16, height: 16, borderRadius: 3, cursor: 'pointer', fontSize: 12, lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 },
-  trackHeader:       { height: TRACK_HEIGHT, flexShrink: 0, display: 'flex', alignItems: 'center', padding: '0 10px', borderBottom: '1px solid #1e1e1e', background: '#121212', position: 'relative' },
+  sectionLabel: { fontSize: 11, fontWeight: 700, letterSpacing: 1, color: '#2abf5a' },
+  addTrackBtn:  { background: 'none', border: '1px solid #333', color: '#666', width: 20, height: 20, borderRadius: 4, cursor: 'pointer', fontSize: 14, lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0 },
+  trackHeader:       { height: TRACK_HEIGHT, flexShrink: 0, display: 'flex', alignItems: 'center', padding: '0 12px', borderBottom: '1px solid #1e1e1e', background: '#121212', position: 'relative' },
   trackResizeHandle: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 5, cursor: 'ns-resize', zIndex: 5 },
-  trackLabel:   { fontSize: 11, fontWeight: 700, color: '#2abf5a', letterSpacing: 0.5 },
+  trackLabel:   { fontSize: 13, fontWeight: 700, color: '#2abf5a', letterSpacing: 0.5 },
 
   // Right column and scroll areas
   timelineRight:  { flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 },
@@ -484,17 +640,17 @@ const styles: Record<string, React.CSSProperties> = {
   ruler:        { height: RULER_HEIGHT, background: '#111', borderBottom: '1px solid #2a2a2a', position: 'relative', cursor: 'pointer', userSelect: 'none' },
   tick:         { position: 'absolute', top: 0, display: 'flex', flexDirection: 'column', alignItems: 'center' },
   tickLine:     { width: 1, height: 8, background: '#3a3a3a' },
-  tickLabel:    { fontSize: 10, color: '#555', marginTop: 1, whiteSpace: 'nowrap', userSelect: 'none' },
-  sectionDivider:      { height: SECTION_H, background: '#0e0e0e', borderBottom: '1px solid #222', display: 'flex', alignItems: 'center', paddingLeft: 8 },
+  tickLabel:    { fontSize: 11, color: '#555', marginTop: 1, whiteSpace: 'nowrap', userSelect: 'none' },
+  sectionDivider:      { height: SECTION_H, background: '#0e0e0e', borderBottom: '1px solid #222', display: 'flex', alignItems: 'center', paddingLeft: 10 },
   sectionDividerAudio: { borderTop: '2px solid #252525' },
-  sectionDividerLabel: { fontSize: 9, fontWeight: 700, letterSpacing: 1, color: '#2abf5a', opacity: 0.4 },
+  sectionDividerLabel: { fontSize: 11, fontWeight: 700, letterSpacing: 1, color: '#2abf5a', opacity: 0.4 },
   track:        { height: TRACK_HEIGHT, borderBottom: '1px solid #1e1e1e', position: 'relative', background: '#181818', transition: 'background 0.1s' },
   trackDragging:{ background: 'rgba(42,191,90,0.07)', outline: '2px dashed #2abf5a', outlineOffset: -2 },
-  clip:         { position: 'absolute', top: 3, height: TRACK_HEIGHT - 6, borderRadius: 3, border: '1px solid', overflow: 'hidden', display: 'flex', alignItems: 'center', userSelect: 'none', cursor: 'grab', minWidth: 4 },
-  clipLabel:    { fontSize: 11, color: '#ccc', paddingLeft: 8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, pointerEvents: 'none' },
-  clipDel:      { position: 'absolute', top: 1, right: 1, background: 'transparent', border: 'none', color: '#555', cursor: 'pointer', fontSize: 12, lineHeight: 1, padding: '0 2px' },
-  resizeL:      { position: 'absolute', left: 0, top: 0, width: 5, height: '100%', cursor: 'ew-resize', background: 'rgba(255,255,255,0.1)', zIndex: 2 },
-  resizeR:      { position: 'absolute', right: 0, top: 0, width: 5, height: '100%', cursor: 'ew-resize', background: 'rgba(255,255,255,0.1)', zIndex: 2 },
+  clip:         { position: 'absolute', top: 3, height: TRACK_HEIGHT - 6, borderRadius: 4, border: '1px solid', overflow: 'hidden', display: 'flex', alignItems: 'center', userSelect: 'none', cursor: 'grab', minWidth: 4 },
+  clipLabel:    { fontSize: 12, color: '#fff', paddingLeft: 9, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, pointerEvents: 'none', position: 'relative', zIndex: 2, textShadow: '0 1px 3px rgba(0,0,0,0.9), 0 0 8px rgba(0,0,0,0.8)' },
+  clipDel:      { position: 'absolute', top: 1, right: 1, background: 'transparent', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: '0 2px', zIndex: 4 },
+  resizeL:      { position: 'absolute', left: 0, top: 0, width: 5, height: '100%', cursor: 'ew-resize', background: 'rgba(255,255,255,0.1)', zIndex: 3 },
+  resizeR:      { position: 'absolute', right: 0, top: 0, width: 5, height: '100%', cursor: 'ew-resize', background: 'rgba(255,255,255,0.1)', zIndex: 3 },
   playheadRulerLine: { position: 'absolute', top: 0, bottom: 0, width: 2, background: '#e63950', zIndex: 10, pointerEvents: 'none' },
   snapIndicator:{ position: 'absolute', top: 0, width: 1, background: 'rgba(255,220,0,0.8)', zIndex: 9, pointerEvents: 'none' },
   playheadBar:  { position: 'absolute', top: 0, width: 16, marginLeft: -8, background: 'transparent', zIndex: 10, pointerEvents: 'none' },

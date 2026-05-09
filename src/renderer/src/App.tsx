@@ -9,6 +9,7 @@ import ShortcutsModal from './components/ShortcutsModal'
 import ProjectsScreen from './components/ProjectsScreen'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import { useEditorStore } from './store/useEditorStore'
+import { useHistoryStore, captureSnapshot, snapshotChanged, type HistorySnapshot } from './store/useHistoryStore'
 
 // ── Resizer handle ─────────────────────────────────────────────────────────
 function Resizer({ direction, onMouseDown }: { direction: 'h' | 'v'; onMouseDown: (e: React.MouseEvent) => void }) {
@@ -24,7 +25,7 @@ function Resizer({ direction, onMouseDown }: { direction: 'h' | 'v'; onMouseDown
 const EMPTY_STATE = {
   clips: [], folders: [], timelineItems: [], textOverlays: [],
   currentTime: 0, isPlaying: false, selectedId: null, tool: 'select' as const,
-  zoom: 100, videoTrackCount: 2, audioTrackCount: 2,
+  zoom: 100, videoTrackCount: 2, audioTrackCount: 2, fps: 30,
 }
 
 // ── Editor view ───────────────────────────────────────────────────────────
@@ -32,9 +33,13 @@ function Editor({ projectId, projectName, onBack }: { projectId: string; project
   const [showExport,    setShowExport]    = useState(false)
   const [showShortcuts, setShowShortcuts] = useState(false)
 
-  const [sidebarWidth,    setSidebarWidth]    = useState(240)
-  const [propertiesWidth, setPropertiesWidth] = useState(220)
-  const [timelineHeight,  setTimelineHeight]  = useState(260)
+  const [sidebarWidth,    setSidebarWidth]    = useState(() => Number(localStorage.getItem('layout:sidebarWidth'))    || 240)
+  const [propertiesWidth, setPropertiesWidth] = useState(() => Number(localStorage.getItem('layout:propertiesWidth')) || 220)
+  const [timelineHeight,  setTimelineHeight]  = useState(() => Number(localStorage.getItem('layout:timelineHeight'))  || 260)
+
+  useEffect(() => { localStorage.setItem('layout:sidebarWidth',    String(sidebarWidth))    }, [sidebarWidth])
+  useEffect(() => { localStorage.setItem('layout:propertiesWidth', String(propertiesWidth)) }, [propertiesWidth])
+  useEffect(() => { localStorage.setItem('layout:timelineHeight',  String(timelineHeight))  }, [timelineHeight])
 
   const resizing = useRef<{ type: string; startPos: number; startSize: number } | null>(null)
 
@@ -62,6 +67,33 @@ function Editor({ projectId, projectName, onBack }: { projectId: string; project
     return () => { window.removeEventListener('mousemove', onMouseMove); window.removeEventListener('mouseup', onMouseUp) }
   }, [onMouseMove, onMouseUp])
 
+  // History recording: push snapshot BEFORE the first change of each action, debounce 300 ms
+  const stableSnap  = useRef<HistorySnapshot>(captureSnapshot())
+  const histTimer   = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    const unsub = useEditorStore.subscribe((state) => {
+      if (useHistoryStore.getState().isApplying) return
+
+      const snap: HistorySnapshot = {
+        clips: state.clips, folders: state.folders,
+        timelineItems: state.timelineItems, textOverlays: state.textOverlays,
+        videoTrackCount: state.videoTrackCount, audioTrackCount: state.audioTrackCount,
+      }
+      if (!snapshotChanged(snap, stableSnap.current)) return
+
+      // First change of this action: push state BEFORE the action
+      if (!histTimer.current) useHistoryStore.getState().push({ ...stableSnap.current })
+      else clearTimeout(histTimer.current)
+
+      // After settling, advance the stable baseline
+      histTimer.current = setTimeout(() => {
+        stableSnap.current = captureSnapshot()
+        histTimer.current = null
+      }, 300)
+    })
+    return () => { unsub(); if (histTimer.current) clearTimeout(histTimer.current) }
+  }, [])
+
   // Auto-save on store changes (debounced 1.5 s)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
@@ -83,6 +115,7 @@ function Editor({ projectId, projectName, onBack }: { projectId: string; project
           timelineItems:   state.timelineItems,
           textOverlays:    state.textOverlays,
           zoom:            state.zoom,
+          fps:             state.fps,
           videoTrackCount: state.videoTrackCount,
           audioTrackCount: state.audioTrackCount,
         })
@@ -136,12 +169,14 @@ export default function App() {
         timelineItems:   data.timelineItems   ?? [],
         textOverlays:    data.textOverlays    ?? [],
         zoom:            data.zoom            ?? 100,
+        fps:             data.fps             ?? 30,
         videoTrackCount: data.videoTrackCount ?? 2,
         audioTrackCount: data.audioTrackCount ?? 2,
         currentTime: 0, isPlaying: false, selectedId: null,
       })
       setProjectName(data.name ?? 'Untitled')
       setProjectId(id)
+      useHistoryStore.getState().clear()
     } catch {
       setLoading(false)
     }
@@ -150,6 +185,7 @@ export default function App() {
 
   function goHome() {
     useEditorStore.setState(EMPTY_STATE)
+    useHistoryStore.getState().clear()
     setProjectId(null)
     setProjectName('')
   }

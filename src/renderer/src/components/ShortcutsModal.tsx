@@ -118,22 +118,22 @@ function ShortcutRow({
 
 const styles: Record<string, React.CSSProperties> = {
   overlay: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 },
-  modal: { background: '#1e1e1e', border: '1px solid #333', borderRadius: 10, width: 460, maxHeight: '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' },
-  header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: '1px solid #2a2a2a', flexShrink: 0 },
-  title: { fontSize: 15, fontWeight: 700, color: '#fff' },
-  headerActions: { display: 'flex', alignItems: 'center', gap: 8 },
-  resetBtn: { background: '#2a2a2a', border: '1px solid #444', color: '#aaa', padding: '4px 10px', borderRadius: 5, cursor: 'pointer', fontSize: 12 },
-  closeBtn: { background: 'none', border: 'none', color: '#888', fontSize: 20, cursor: 'pointer', lineHeight: 1 },
-  conflict: { background: '#3a1a1a', color: '#f88', fontSize: 12, padding: '6px 20px', flexShrink: 0 },
-  list: { overflowY: 'auto', flex: 1, padding: '8px 0' },
-  row: { display: 'flex', alignItems: 'center', padding: '7px 20px', gap: 12 },
-  rowLabel: { flex: 1, fontSize: 13, color: '#ccc' },
+  modal: { background: '#1e1e1e', border: '1px solid #333', borderRadius: 12, width: 520, maxHeight: '80vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' },
+  header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '18px 24px', borderBottom: '1px solid #2a2a2a', flexShrink: 0 },
+  title: { fontSize: 17, fontWeight: 700, color: '#fff' },
+  headerActions: { display: 'flex', alignItems: 'center', gap: 10 },
+  resetBtn: { background: '#2a2a2a', border: '1px solid #444', color: '#aaa', padding: '5px 12px', borderRadius: 6, cursor: 'pointer', fontSize: 13 },
+  closeBtn: { background: 'none', border: 'none', color: '#888', fontSize: 24, cursor: 'pointer', lineHeight: 1 },
+  conflict: { background: '#3a1a1a', color: '#f88', fontSize: 13, padding: '8px 24px', flexShrink: 0 },
+  list: { overflowY: 'auto', flex: 1, padding: '10px 0' },
+  row: { display: 'flex', alignItems: 'center', padding: '9px 24px', gap: 14 },
+  rowLabel: { flex: 1, fontSize: 14, color: '#ccc' },
   keyBadge: {
     background: '#2a2a2a', border: '1px solid #444', color: '#fff',
-    padding: '4px 10px', borderRadius: 5, cursor: 'pointer', fontSize: 12,
-    fontFamily: 'monospace', minWidth: 90, textAlign: 'center'
+    padding: '6px 12px', borderRadius: 6, cursor: 'pointer', fontSize: 13,
+    fontFamily: 'monospace', minWidth: 100, textAlign: 'center'
   },
   keyBadgeRecording: { background: '#1a3a5a', borderColor: '#4a9fd4', color: '#7cf', animation: 'none' },
-  rowReset: { background: 'none', border: 'none', color: '#555', cursor: 'pointer', fontSize: 15, padding: '0 4px' },
-  hint: { fontSize: 11, color: '#555', padding: '10px 20px', borderTop: '1px solid #2a2a2a', flexShrink: 0 }
+  rowReset: { background: 'none', border: 'none', color: '#555', cursor: 'pointer', fontSize: 17, padding: '0 4px' },
+  hint: { fontSize: 13, color: '#555', padding: '12px 24px', borderTop: '1px solid #2a2a2a', flexShrink: 0 }
 }

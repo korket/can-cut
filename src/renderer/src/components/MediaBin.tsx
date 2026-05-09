@@ -19,7 +19,7 @@ export default function MediaBin() {
 
   const [draggingOver, setDraggingOver]       = useState(false)
   const [importing, setImporting]             = useState(false)
-  const [expanded, setExpanded]               = useState<Set<string>>(new Set())
+  const [expanded, setExpanded]               = useState<Set<string>>(() => new Set(folders.map(f => f.id)))
   const [editingId, setEditingId]             = useState<string | null>(null)
   const [editingName, setEditingName]         = useState('')
   const [folderDragOver, setFolderDragOver]   = useState<string | null>(null)
@@ -175,6 +175,7 @@ export default function MediaBin() {
                   </span>
                 )}
                 <span style={styles.folderCount}>{folderClips.length}</span>
+                <button style={styles.folderRename} onClick={e => { e.stopPropagation(); setEditingId(folder.id); setEditingName(folder.name) }} title="Rename folder">✎</button>
                 <button style={styles.folderDel} onClick={() => removeFolder(folder.id)}>×</button>
               </div>
 
@@ -237,44 +238,45 @@ function ClipCard({ clip, onAdd, onRemove }: { clip: MediaClip; onAdd: () => voi
 
 const styles: Record<string, React.CSSProperties> = {
   bin:             { display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' },
-  header:          { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', borderBottom: '1px solid #2a2a2a', flexShrink: 0 },
-  title:           { fontSize: 13, fontWeight: 600, color: '#ccc' },
-  headerBtns:      { display: 'flex', gap: 6 },
-  headerBtn:       { background: '#2a2a2a', border: 'none', color: '#ddd', padding: '4px 10px', borderRadius: 5, cursor: 'pointer', fontSize: 12 },
+  header:          { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderBottom: '1px solid #2a2a2a', flexShrink: 0 },
+  title:           { fontSize: 15, fontWeight: 600, color: '#ccc' },
+  headerBtns:      { display: 'flex', gap: 8 },
+  headerBtn:       { background: '#2a2a2a', border: 'none', color: '#ddd', padding: '5px 12px', borderRadius: 5, cursor: 'pointer', fontSize: 13 },
 
-  content:         { flex: 1, overflowY: 'auto', padding: 8, position: 'relative', transition: 'background 0.15s' },
+  content:         { flex: 1, overflowY: 'auto', padding: 10, position: 'relative', transition: 'background 0.15s' },
   contentDragging: { background: 'rgba(42,191,90,0.06)', outline: '2px dashed #2abf5a', outlineOffset: -4 },
-  dropOverlay:     { position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, pointerEvents: 'none', zIndex: 10 },
-  dropIcon:        { fontSize: 40, color: '#2abf5a', lineHeight: 1 },
-  dropText:        { fontSize: 14, color: '#2abf5a', fontWeight: 600 },
-  importing:       { textAlign: 'center', color: '#888', fontSize: 12, padding: '20px 0' },
-  empty:           { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '40px 0', cursor: 'pointer', color: '#555' },
-  emptyIcon:       { fontSize: 32 },
-  emptyText:       { fontSize: 12 },
-  emptySubtext:    { fontSize: 11, color: '#3a3a3a' },
+  dropOverlay:     { position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, pointerEvents: 'none', zIndex: 10 },
+  dropIcon:        { fontSize: 48, color: '#2abf5a', lineHeight: 1 },
+  dropText:        { fontSize: 16, color: '#2abf5a', fontWeight: 600 },
+  importing:       { textAlign: 'center', color: '#888', fontSize: 14, padding: '24px 0' },
+  empty:           { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '48px 0', cursor: 'pointer', color: '#555' },
+  emptyIcon:       { fontSize: 38 },
+  emptyText:       { fontSize: 14 },
+  emptySubtext:    { fontSize: 13, color: '#3a3a3a' },
 
   // Folder
-  folderSection:   { marginBottom: 4 },
-  folderHeader:    { display: 'flex', alignItems: 'center', gap: 4, padding: '4px 6px', borderRadius: 5, cursor: 'pointer', userSelect: 'none', background: '#1e1e1e', marginBottom: 2, transition: 'background 0.1s' },
+  folderSection:   { marginBottom: 6 },
+  folderHeader:    { display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', borderRadius: 5, cursor: 'pointer', userSelect: 'none', background: '#1e1e1e', marginBottom: 3, transition: 'background 0.1s' },
   folderHeaderOver:{ background: 'rgba(42,191,90,0.12)', outline: '1px dashed #2abf5a' },
-  toggleBtn:       { background: 'none', border: 'none', color: '#888', fontSize: 13, cursor: 'pointer', padding: 0, width: 16, flexShrink: 0 },
-  folderName:      { flex: 1, fontSize: 12, color: '#ccc', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-  nameInput:       { flex: 1, background: '#2a2a2a', border: '1px solid #444', color: '#fff', fontSize: 12, padding: '1px 4px', borderRadius: 3, outline: 'none' },
-  folderCount:     { fontSize: 10, color: '#555', flexShrink: 0 },
-  folderDel:       { background: 'none', border: 'none', color: '#555', cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: '0 2px', flexShrink: 0 },
-  folderGrid:      { display: 'flex', flexWrap: 'wrap', gap: 8, padding: '4px 4px 8px 20px' },
-  folderEmpty:     { fontSize: 11, color: '#444', padding: '8px 0', width: '100%', textAlign: 'center' },
+  toggleBtn:       { background: 'none', border: 'none', color: '#888', fontSize: 15, cursor: 'pointer', padding: 0, width: 18, flexShrink: 0 },
+  folderName:      { flex: 1, fontSize: 14, color: '#ccc', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  nameInput:       { flex: 1, background: '#2a2a2a', border: '1px solid #444', color: '#fff', fontSize: 13, padding: '2px 6px', borderRadius: 3, outline: 'none' },
+  folderCount:     { fontSize: 12, color: '#555', flexShrink: 0 },
+  folderRename:    { background: 'none', border: 'none', color: '#555', cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: '0 2px', flexShrink: 0 },
+  folderDel:       { background: 'none', border: 'none', color: '#555', cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: '0 2px', flexShrink: 0 },
+  folderGrid:      { display: 'flex', flexWrap: 'wrap', gap: 10, padding: '6px 4px 10px 24px' },
+  folderEmpty:     { fontSize: 13, color: '#444', padding: '10px 0', width: '100%', textAlign: 'center' },
 
   // Clips
-  grid:            { display: 'flex', flexWrap: 'wrap', gap: 8, padding: '4px 0' },
-  card:            { width: 110, display: 'flex', flexDirection: 'column', gap: 4 },
-  thumb:           { width: 110, height: 70, background: '#222', borderRadius: 5, overflow: 'hidden', position: 'relative', cursor: 'pointer' },
+  grid:            { display: 'flex', flexWrap: 'wrap', gap: 10, padding: '4px 0' },
+  card:            { width: 130, display: 'flex', flexDirection: 'column', gap: 5 },
+  thumb:           { width: 130, height: 82, background: '#222', borderRadius: 6, overflow: 'hidden', position: 'relative', cursor: 'pointer' },
   thumbImg:        { width: '100%', height: '100%', objectFit: 'cover' },
-  thumbPlaceholder:{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, color: '#555' },
-  duration:        { position: 'absolute', bottom: 3, right: 4, fontSize: 10, color: '#fff', background: 'rgba(0,0,0,0.7)', padding: '1px 4px', borderRadius: 3 },
+  thumbPlaceholder:{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28, color: '#555' },
+  duration:        { position: 'absolute', bottom: 4, right: 5, fontSize: 11, color: '#fff', background: 'rgba(0,0,0,0.7)', padding: '1px 5px', borderRadius: 3 },
   clipInfo:        { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 },
-  clipName:        { fontSize: 11, color: '#aaa', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-  clipActions:     { display: 'flex', gap: 2 },
-  addBtn:          { background: '#333', border: 'none', color: '#6cf', padding: '1px 5px', borderRadius: 3, cursor: 'pointer', fontSize: 13 },
-  delBtn:          { background: '#333', border: 'none', color: '#f66', padding: '1px 5px', borderRadius: 3, cursor: 'pointer', fontSize: 13 },
+  clipName:        { fontSize: 12, color: '#aaa', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  clipActions:     { display: 'flex', gap: 3 },
+  addBtn:          { background: '#333', border: 'none', color: '#6cf', padding: '2px 6px', borderRadius: 3, cursor: 'pointer', fontSize: 14 },
+  delBtn:          { background: '#333', border: 'none', color: '#f66', padding: '2px 6px', borderRadius: 3, cursor: 'pointer', fontSize: 14 },
 }
