@@ -56,6 +56,8 @@ export default function Timeline() {
   const msToPx = (ms: number) => ms * pxPerMs
   const pxToMs = (px: number) => px / pxPerMs
 
+  const [trayOpen, setTrayOpen] = useState(true)
+
   const [trackHeights, setTrackHeights] = useState<Record<number, number>>(() => {
     try { return JSON.parse(localStorage.getItem('layout:trackHeights') ?? '{}') } catch { return {} }
   })
@@ -398,19 +400,22 @@ export default function Timeline() {
           <button style={styles.zoomBtn} onClick={() => setZoom(zoom + 20)}>+</button>
           <button style={{ ...styles.snapBtn, ...(snapEnabled ? styles.snapActive : {}) }} onClick={() => setSnapEnabled(!snapEnabled)}>Snap</button>
         </div>
-      </div>
 
-      {/* Transitions tray */}
-      <div style={styles.transitionsTray}>
-        <span style={styles.trayLabel}>Transitions</span>
-        {TRANSITION_TYPES.map(({ type, label }) => (
-          <div
-            key={type}
-            draggable
-            onDragStart={e => { e.dataTransfer.setData('transition-type', type); e.dataTransfer.effectAllowed = 'copy' }}
-            style={styles.trayChip}
-          >{label}</div>
-        ))}
+        {/* Transitions strip — inline in toolbar */}
+        <div style={styles.trayInline}>
+          <div style={styles.trayDivider} />
+          <button style={styles.trayToggle} onClick={() => setTrayOpen(v => !v)} title={trayOpen ? 'Hide transitions' : 'Show transitions'}>
+            Transitions {trayOpen ? '▾' : '▸'}
+          </button>
+          {trayOpen && TRANSITION_TYPES.map(({ type, label }) => (
+            <div
+              key={type}
+              draggable
+              onDragStart={e => { e.dataTransfer.setData('transition-type', type); e.dataTransfer.effectAllowed = 'copy' }}
+              style={styles.trayChip}
+            >{label}</div>
+          ))}
+        </div>
       </div>
 
       {/* Body: headers + scrollable content */}
@@ -837,7 +842,8 @@ const styles: Record<string, React.CSSProperties> = {
   resizeR:      { position: 'absolute', right: 0, top: 0, width: 5, height: '100%', cursor: 'ew-resize', background: 'rgba(255,255,255,0.1)', zIndex: 3 },
   snapIndicator:{ position: 'absolute', top: 0, width: 1, background: 'rgba(255,220,0,0.8)', zIndex: 9, pointerEvents: 'none' },
 
-  transitionsTray: { display: 'flex', alignItems: 'center', gap: 5, padding: '5px 14px', background: '#0f0f0f', borderBottom: '1px solid #1e1e1e', flexShrink: 0, overflowX: 'auto' },
-  trayLabel:       { fontSize: 11, color: '#444', marginRight: 6, whiteSpace: 'nowrap', userSelect: 'none' },
-  trayChip:        { padding: '3px 9px', background: '#1e1e1e', border: '1px solid #333', borderRadius: 4, cursor: 'grab', fontSize: 11, color: '#999', whiteSpace: 'nowrap', userSelect: 'none' },
+  trayInline:  { display: 'flex', alignItems: 'center', gap: 4, flex: 1, overflow: 'hidden' },
+  trayDivider: { width: 1, height: 18, background: '#2a2a2a', flexShrink: 0, marginLeft: 6, marginRight: 6 },
+  trayToggle:  { background: 'none', border: 'none', color: '#555', fontSize: 11, cursor: 'pointer', whiteSpace: 'nowrap', padding: '2px 4px', userSelect: 'none' },
+  trayChip:    { padding: '2px 7px', background: '#1e1e1e', border: '1px solid #333', borderRadius: 4, cursor: 'grab', fontSize: 11, color: '#999', whiteSpace: 'nowrap', userSelect: 'none', flexShrink: 0 },
 }
