@@ -198,7 +198,7 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   setFps: (fps) => set({ fps }),
 
   zoom: 100,
-  setZoom: (z) => set({ zoom: Math.max(20, Math.min(500, z)) }),
+  setZoom: (z) => set({ zoom: Math.max(1, Math.min(2000, z)) }),
 
   videoTrackCount: 2,
   audioTrackCount: 2,

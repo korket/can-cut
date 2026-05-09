@@ -294,7 +294,7 @@ export default function Timeline() {
       } else if (matches(zoomSc)) {
         e.preventDefault()
         const { zoom: z, setZoom: sz } = useEditorStore.getState()
-        sz(Math.max(20, z + (e.deltaY < 0 ? 20 : -20)))
+        sz(z + (e.deltaY < 0 ? 20 : -20))
       }
     }
     el.addEventListener('wheel', onWheel, { passive: false })
