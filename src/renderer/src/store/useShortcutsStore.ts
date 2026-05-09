@@ -3,10 +3,11 @@ import { create } from 'zustand'
 export interface Shortcut {
   id: string
   label: string
-  key: string        // e.g. 'Space', 'ArrowLeft', 's'
+  key: string        // e.g. 'Space', 'ArrowLeft', 's', or 'Scroll' for scroll shortcuts
   ctrl: boolean
   shift: boolean
   alt: boolean
+  type?: 'key' | 'scroll'  // defaults to 'key'
 }
 
 export const DEFAULT_SHORTCUTS: Shortcut[] = [
@@ -22,6 +23,8 @@ export const DEFAULT_SHORTCUTS: Shortcut[] = [
   { id: 'zoom_in',        label: 'Timeline Zoom In',     key: '=',          ctrl: false, shift: false, alt: false },
   { id: 'zoom_out',       label: 'Timeline Zoom Out',    key: '-',          ctrl: false, shift: false, alt: false },
   { id: 'export',         label: 'Export',               key: 'e',          ctrl: true,  shift: false, alt: false },
+  { id: 'scroll_timeline', label: 'Pan Timeline',         key: 'Scroll',     ctrl: true,  shift: false, alt: false, type: 'scroll' },
+  { id: 'zoom_scroll',     label: 'Zoom Timeline',        key: 'Scroll',     ctrl: false, shift: false, alt: true,  type: 'scroll' },
 ]
 
 const STORAGE_KEY = 'can-cut-shortcuts'
@@ -68,7 +71,11 @@ export function formatShortcut(sc: Shortcut): string {
   if (sc.ctrl)  parts.push('Ctrl')
   if (sc.shift) parts.push('Shift')
   if (sc.alt)   parts.push('Alt')
-  parts.push(sc.key === 'Space' ? 'Space' : sc.key === 'Delete' ? 'Del' : sc.key.toUpperCase())
+  const keyLabel = sc.type === 'scroll' ? 'Scroll'
+    : sc.key === 'Space' ? 'Space'
+    : sc.key === 'Delete' ? 'Del'
+    : sc.key.toUpperCase()
+  parts.push(keyLabel)
   return parts.join('+')
 }
 

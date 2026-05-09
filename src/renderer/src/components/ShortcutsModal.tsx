@@ -12,16 +12,24 @@ export default function ShortcutsModal({ onClose }: Props) {
   const [conflict, setConflict] = useState<string | null>(null)
 
   useEffect(() => {
+    if (recording) return
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') { e.preventDefault(); onClose() }
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [recording, onClose])
+
+  // Recording: key shortcuts
+  useEffect(() => {
     if (!recording) return
+    const sc = shortcuts.find(s => s.id === recording)
+    if (sc?.type === 'scroll') return  // handled by wheel effect below
 
     function onKey(e: KeyboardEvent) {
       e.preventDefault()
       e.stopPropagation()
-
-      // Escape cancels recording
       if (e.key === 'Escape') { setRecording(null); return }
-
-      // Ignore bare modifiers
       if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) return
 
       const incoming: Partial<Shortcut> = {
@@ -31,21 +39,12 @@ export default function ShortcutsModal({ onClose }: Props) {
         alt: e.altKey
       }
 
-      // Check for conflict
       const taken = shortcuts.find(
-        (sc) =>
-          sc.id !== recording &&
-          sc.key === incoming.key &&
-          sc.ctrl === incoming.ctrl &&
-          sc.shift === incoming.shift &&
-          sc.alt === incoming.alt
+        (s) => s.id !== recording && s.type !== 'scroll' &&
+          s.key === incoming.key && s.ctrl === incoming.ctrl &&
+          s.shift === incoming.shift && s.alt === incoming.alt
       )
-
-      if (taken) {
-        setConflict(`Already used by "${taken.label}"`)
-        setRecording(null)
-        return
-      }
+      if (taken) { setConflict(`Already used by "${taken.label}"`); setRecording(null); return }
 
       setConflict(null)
       setShortcut(recording, incoming)
@@ -54,6 +53,43 @@ export default function ShortcutsModal({ onClose }: Props) {
 
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
+  }, [recording, shortcuts])
+
+  // Recording: scroll shortcuts
+  useEffect(() => {
+    if (!recording) return
+    const sc = shortcuts.find(s => s.id === recording)
+    if (sc?.type !== 'scroll') return
+
+    function onWheel(e: WheelEvent) {
+      e.preventDefault()
+      e.stopPropagation()
+      const incoming: Partial<Shortcut> = {
+        key: 'Scroll',
+        ctrl: e.ctrlKey,
+        shift: e.shiftKey,
+        alt: e.altKey
+      }
+      const taken = shortcuts.find(
+        s => s.id !== recording && s.type === 'scroll' &&
+          s.ctrl === incoming.ctrl && s.shift === incoming.shift && s.alt === incoming.alt
+      )
+      if (taken) { setConflict(`Already used by "${taken.label}"`); setRecording(null); return }
+      setConflict(null)
+      setShortcut(recording, incoming)
+      setRecording(null)
+    }
+
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') { e.preventDefault(); setRecording(null) }
+    }
+
+    window.addEventListener('wheel', onWheel, { passive: false, capture: true })
+    window.addEventListener('keydown', onKey, true)
+    return () => {
+      window.removeEventListener('wheel', onWheel, { capture: true })
+      window.removeEventListener('keydown', onKey, true)
+    }
   }, [recording, shortcuts])
 
   return (
@@ -84,7 +120,7 @@ export default function ShortcutsModal({ onClose }: Props) {
           ))}
         </div>
 
-        <div style={styles.hint}>Click a shortcut to rebind it, then press the new key combination.</div>
+        <div style={styles.hint}>Click a shortcut to rebind it. For key shortcuts, press the new combination. For scroll shortcuts, scroll with the desired modifier.</div>
       </div>
     </div>
   )
@@ -109,7 +145,9 @@ function ShortcutRow({
         onClick={onStartRecord}
         title="Click to rebind"
       >
-        {isRecording ? 'Press keys…' : formatShortcut(shortcut)}
+        {isRecording
+          ? (shortcut.type === 'scroll' ? 'Scroll now…' : 'Press keys…')
+          : formatShortcut(shortcut)}
       </button>
       <button style={styles.rowReset} onClick={onReset} title="Reset to default">↺</button>
     </div>

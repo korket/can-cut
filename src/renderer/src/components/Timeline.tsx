@@ -1,5 +1,6 @@
 import { useRef, useCallback, useEffect, useState, Fragment } from 'react'
 import { useEditorStore } from '../store/useEditorStore'
+import { useShortcutsStore } from '../store/useShortcutsStore'
 import type { TransitionType } from '../types'
 import { DEFAULT_TRANSITION } from '../types'
 import { importAndAddClips } from '../utils/importClip'
@@ -48,6 +49,7 @@ export default function Timeline() {
   const containerRef = useRef<HTMLDivElement>(null)   // tracks scroll area
   const rulerRef     = useRef<HTMLDivElement>(null)   // ruler scroll area (horiz only)
   const headerRef    = useRef<HTMLDivElement>(null)   // header scroll area (vert only)
+  const wrapperRef   = useRef<HTMLDivElement>(null)   // outermost timeline div
   const duration = Math.max(getTimelineDuration() + 5000, 30000)
   const pxPerMs = zoom / 1000
 
@@ -275,6 +277,30 @@ export default function Timeline() {
     return () => { window.removeEventListener('mousemove', onScrubMove); window.removeEventListener('mouseup', onScrubUp) }
   }, [onScrubMove, onScrubUp])
 
+  // ── Scroll / zoom via wheel ────────────────────────────────────────────────
+  useEffect(() => {
+    const el = wrapperRef.current
+    if (!el) return
+    function onWheel(e: WheelEvent) {
+      const { shortcuts } = useShortcutsStore.getState()
+      const panSc  = shortcuts.find(s => s.id === 'scroll_timeline')
+      const zoomSc = shortcuts.find(s => s.id === 'zoom_scroll')
+      const matches = (sc: typeof panSc) =>
+        sc && e.ctrlKey === sc.ctrl && e.shiftKey === sc.shift && e.altKey === sc.alt
+      if (matches(panSc)) {
+        e.preventDefault()
+        const tracks = containerRef.current
+        if (tracks) tracks.scrollLeft += e.deltaY
+      } else if (matches(zoomSc)) {
+        e.preventDefault()
+        const { zoom: z, setZoom: sz } = useEditorStore.getState()
+        sz(Math.max(20, z + (e.deltaY < 0 ? 20 : -20)))
+      }
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [])
+
   // ── Track height resize ────────────────────────────────────────────────────
   const trackResizeState = useRef<{ idx: number; startY: number; startH: number } | null>(null)
 
@@ -362,7 +388,7 @@ export default function Timeline() {
   const playheadLeft = msToPx(currentTime)
 
   return (
-    <div style={styles.wrapper}>
+    <div style={styles.wrapper} ref={wrapperRef}>
       {/* Toolbar */}
       <div style={styles.toolbar}>
         <span style={styles.toolbarLabel}>Timeline</span>
