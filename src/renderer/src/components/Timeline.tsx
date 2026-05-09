@@ -141,50 +141,83 @@ export default function Timeline() {
   }, [onMouseMove, onMouseUp])
 
   // ── Resize ─────────────────────────────────────────────────────────────────
-  const resizeState = useRef<{ id: string; edge: 'left' | 'right'; startX: number; origTrimStart: number; origTrimEnd: number; origItemStart: number } | null>(null)
+  const resizeState = useRef<{
+    id: string; edge: 'left' | 'right'; startX: number
+    origTrimStart: number; origTrimEnd: number; origItemStart: number
+    adjId: string | null; adjClipId: string | null
+    origAdjTrimStart: number; origAdjTrimEnd: number; origAdjItemStart: number
+  } | null>(null)
 
   function onResizeMouseDown(e: React.MouseEvent, itemId: string, edge: 'left' | 'right') {
     e.preventDefault(); e.stopPropagation()
-    const item = timelineItems.find(i => i.id === itemId)!
-    resizeState.current = { id: itemId, edge, startX: e.clientX, origTrimStart: item.trimStart, origTrimEnd: item.trimEnd, origItemStart: item.startTime }
+    const { timelineItems: items } = useEditorStore.getState()
+    const item = items.find(i => i.id === itemId)!
+    const itemEnd = item.startTime + (item.trimEnd - item.trimStart)
+
+    // Find the immediately adjacent clip to link with
+    const adj = items.find(i => {
+      if (i.id === itemId || i.trackIndex !== item.trackIndex) return false
+      if (edge === 'right') return Math.abs(i.startTime - itemEnd) < 50
+      return Math.abs((i.startTime + (i.trimEnd - i.trimStart)) - item.startTime) < 50
+    }) ?? null
+
+    resizeState.current = {
+      id: itemId, edge, startX: e.clientX,
+      origTrimStart: item.trimStart, origTrimEnd: item.trimEnd, origItemStart: item.startTime,
+      adjId: adj?.id ?? null, adjClipId: adj?.clipId ?? null,
+      origAdjTrimStart: adj?.trimStart ?? 0, origAdjTrimEnd: adj?.trimEnd ?? 0, origAdjItemStart: adj?.startTime ?? 0,
+    }
   }
 
   const onResizeMove = useCallback((e: MouseEvent) => {
     if (!resizeState.current) return
-    const { id, edge, startX, origTrimStart, origTrimEnd, origItemStart } = resizeState.current
-    const { fps: curFps } = useEditorStore.getState()
+    const { id, edge, startX, origTrimStart, origTrimEnd, origItemStart,
+            adjId, adjClipId, origAdjTrimStart, origAdjTrimEnd, origAdjItemStart } = resizeState.current
+    const { fps: curFps, clips: allClips } = useEditorStore.getState()
     const minDur = frameDurationMs(curFps)
     const dx = pxToMs(e.clientX - startX)
     const item = timelineItems.find(i => i.id === id)
     if (!item) return
-    const clip = useEditorStore.getState().clips.find(c => c.id === item.clipId)
+    const clip = allClips.find(c => c.id === item.clipId)
     if (!clip) return
 
-    const sameTrack = timelineItems.filter(i => i.id !== id && i.trackIndex === item.trackIndex)
-
     if (edge === 'right') {
-      const nextItem = sameTrack
-        .filter(i => i.startTime > item.startTime)
-        .sort((a, b) => a.startTime - b.startTime)[0]
-      const maxEnd = nextItem ? nextItem.startTime : Infinity
-
-      const rawEnd = Math.min(
-        item.startTime + Math.min(clip.duration - item.trimStart, Math.max(minDur, origTrimEnd - origTrimStart + dx)),
-        maxEnd,
+      // Desired new timeline end for this clip
+      let newEnd = item.startTime + Math.min(
+        clip.duration - origTrimStart,
+        Math.max(minDur, origTrimEnd - origTrimStart + dx),
       )
-      const snappedEnd = trySnap(snapToFrame(rawEnd, curFps), id)
-      updateTimelineItem(id, { trimEnd: Math.min(clip.duration, origTrimStart + Math.max(minDur, snappedEnd - item.startTime)) })
+      // Clamp: adjacent clip's trimStart must stay in [0, origAdjTrimEnd - minDur]
+      if (adjId) {
+        newEnd = Math.min(newEnd, origAdjItemStart + (origAdjTrimEnd - minDur - origAdjTrimStart))
+        newEnd = Math.max(newEnd, origAdjItemStart - origAdjTrimStart) // adj trimStart >= 0
+      }
+      const snappedEnd = trySnap(snapToFrame(newEnd, curFps), id)
+      updateTimelineItem(id, { trimEnd: origTrimStart + Math.max(minDur, snappedEnd - item.startTime) })
+      if (adjId) {
+        updateTimelineItem(adjId, {
+          startTime: snappedEnd,
+          trimStart: origAdjTrimStart + (snappedEnd - origAdjItemStart),
+        })
+      }
     } else {
-      const prevItem = sameTrack
-        .filter(i => i.startTime + (i.trimEnd - i.trimStart) <= origItemStart + 1)
-        .sort((a, b) => (b.startTime + (b.trimEnd - b.trimStart)) - (a.startTime + (a.trimEnd - a.trimStart)))[0]
-      const minStart = prevItem ? prevItem.startTime + (prevItem.trimEnd - prevItem.trimStart) : 0
-
-      const rawStart = snapToFrame(Math.max(minStart, origItemStart + dx), curFps)
-      const snappedStart = trySnap(rawStart, id)
+      const adjClip = adjClipId ? allClips.find(c => c.id === adjClipId) : null
+      // Desired new timeline start for this clip
+      let newStart = origItemStart + dx
+      // Clamp: adjacent clip's trimEnd must stay in [origAdjTrimStart + minDur, adjClip.duration]
+      if (adjId) {
+        newStart = Math.max(newStart, origAdjItemStart + minDur) // adj keeps ≥1 frame
+        if (adjClip) newStart = Math.min(newStart, origAdjItemStart + (adjClip.duration - origAdjTrimStart))
+      }
+      newStart = Math.max(0, newStart)
+      const snappedStart = trySnap(snapToFrame(newStart, curFps), id)
       const delta = snappedStart - origItemStart
       const newTrimStart = Math.max(0, Math.min(origTrimEnd - minDur, origTrimStart + delta))
-      updateTimelineItem(id, { trimStart: newTrimStart, startTime: Math.max(minStart, origItemStart + (newTrimStart - origTrimStart)) })
+      const actualStart = origItemStart + (newTrimStart - origTrimStart)
+      updateTimelineItem(id, { trimStart: newTrimStart, startTime: actualStart })
+      if (adjId) {
+        updateTimelineItem(adjId, { trimEnd: origAdjTrimStart + (actualStart - origAdjItemStart) })
+      }
     }
   }, [pxPerMs, timelineItems, snapEnabled, currentTime])
 
