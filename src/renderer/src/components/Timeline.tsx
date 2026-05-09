@@ -445,7 +445,7 @@ export default function Timeline() {
                 </div>
               ))}
               <div style={{ position: 'absolute', top: 0, height: RULER_HEIGHT, left: playheadLeft - 1, width: 2, background: '#e63950', zIndex: 10, pointerEvents: 'none' }}>
-                <div style={{ position: 'absolute', bottom: -6, left: -5, width: 12, height: 12, background: '#e63950', borderRadius: '50%' }} />
+                <div style={{ position: 'absolute', bottom: 0, left: 1, width: 0, height: 0, borderLeft: '6px solid transparent', borderRight: '6px solid transparent', borderTop: '10px solid #e63950' }} />
               </div>
             </div>
           </div>
