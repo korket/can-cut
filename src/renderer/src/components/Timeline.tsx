@@ -676,6 +676,8 @@ function TrackRow({ trackIdx, trackHeight, clips, timelineItems, msToPx, dragOve
         ) : null
         const hasTr = !!item.transitionIn && item.transitionIn.type !== 'cut'
 
+        const chipSize = Math.round(Math.min(22, Math.max(10, trackHeight * 0.5)))
+
         return (
           <Fragment key={item.id}>
             {/* Transition chip — sits at the junction between two adjacent clips */}
@@ -683,12 +685,12 @@ function TrackRow({ trackIdx, trackHeight, clips, timelineItems, msToPx, dragOve
               <div
                 style={{
                   position: 'absolute', zIndex: 6,
-                  left: msToPx(item.startTime) - 11,
+                  left: msToPx(item.startTime) - chipSize / 2,
                   top: '50%', transform: 'translateY(-50%)',
-                  width: 22, height: 22,
+                  width: chipSize, height: chipSize,
                   background: hasTr ? '#2d1560' : '#1a1a1a',
                   border: `1px solid ${hasTr ? '#7040e0' : '#333'}`,
-                  borderRadius: 4, cursor: 'pointer',
+                  borderRadius: Math.round(chipSize * 0.18), cursor: 'pointer',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                 }}
                 onMouseDown={e => e.stopPropagation()}
@@ -701,7 +703,7 @@ function TrackRow({ trackIdx, trackHeight, clips, timelineItems, msToPx, dragOve
                 }}
                 title={hasTr ? item.transitionIn!.type : 'Drag a transition here or click to set'}
               >
-                <span style={{ fontSize: 9, color: hasTr ? '#a080ff' : '#444', pointerEvents: 'none', lineHeight: 1 }}>
+                <span style={{ fontSize: Math.round(chipSize * 0.41), color: hasTr ? '#a080ff' : '#444', pointerEvents: 'none', lineHeight: 1 }}>
                   {hasTr ? '◈' : '+'}
                 </span>
               </div>
