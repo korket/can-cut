@@ -444,7 +444,9 @@ export default function Timeline() {
                   <span style={styles.tickLabel}>{formatRulerTime(t)}</span>
                 </div>
               ))}
-              <div style={{ ...styles.playheadRulerLine, left: playheadLeft }} />
+              <div style={{ position: 'absolute', top: 0, height: RULER_HEIGHT, left: playheadLeft - 1, width: 2, background: '#e63950', zIndex: 10, pointerEvents: 'none' }}>
+                <div style={{ position: 'absolute', bottom: -6, left: -5, width: 12, height: 12, background: '#e63950', borderRadius: '50%' }} />
+              </div>
             </div>
           </div>
 
@@ -487,10 +489,7 @@ export default function Timeline() {
               )}
 
               {/* Playhead */}
-              <div style={{ ...styles.playheadBar, left: playheadLeft, height: totalHeight }}>
-                <div style={styles.playheadLine} />
-                <div style={styles.playheadHead} />
-              </div>
+              <div style={{ position: 'absolute', top: 0, left: playheadLeft - 1, width: 2, height: totalHeight, background: '#e63950', zIndex: 10, pointerEvents: 'none' }} />
             </div>
           </div>
         </div>
@@ -810,11 +809,7 @@ const styles: Record<string, React.CSSProperties> = {
   clipDel:      { position: 'absolute', top: 1, right: 1, background: 'transparent', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: '0 2px', zIndex: 4 },
   resizeL:      { position: 'absolute', left: 0, top: 0, width: 5, height: '100%', cursor: 'ew-resize', background: 'rgba(255,255,255,0.1)', zIndex: 3 },
   resizeR:      { position: 'absolute', right: 0, top: 0, width: 5, height: '100%', cursor: 'ew-resize', background: 'rgba(255,255,255,0.1)', zIndex: 3 },
-  playheadRulerLine: { position: 'absolute', top: 0, bottom: 0, width: 2, background: '#e63950', zIndex: 10, pointerEvents: 'none' },
   snapIndicator:{ position: 'absolute', top: 0, width: 1, background: 'rgba(255,220,0,0.8)', zIndex: 9, pointerEvents: 'none' },
-  playheadBar:  { position: 'absolute', top: 0, width: 16, marginLeft: -8, background: 'transparent', zIndex: 10, pointerEvents: 'none' },
-  playheadLine: { position: 'absolute', top: 0, bottom: 0, left: '50%', width: 2, marginLeft: -1, background: '#e63950', pointerEvents: 'none' },
-  playheadHead: { width: 12, height: 12, background: '#e63950', borderRadius: '50%', position: 'absolute', top: -4, left: 2, pointerEvents: 'none' },
 
   transitionsTray: { display: 'flex', alignItems: 'center', gap: 5, padding: '5px 14px', background: '#0f0f0f', borderBottom: '1px solid #1e1e1e', flexShrink: 0, overflowX: 'auto' },
   trayLabel:       { fontSize: 11, color: '#444', marginRight: 6, whiteSpace: 'nowrap', userSelect: 'none' },
