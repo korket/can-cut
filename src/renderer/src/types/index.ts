@@ -113,12 +113,15 @@ export interface KenBurns {
   startY:     number
   endX:       number
   endY:       number
+  focalX:     number   // 0–100, zoom pivot X (% of frame width,  50 = centre)
+  focalY:     number   // 0–100, zoom pivot Y (% of frame height, 50 = centre)
 }
 
 export const DEFAULT_KEN_BURNS: KenBurns = {
   startScale: 1.0, endScale: 1.15,
   startX: -3, startY: -3,
   endX:    3, endY:    3,
+  focalX: 50, focalY: 50,
 }
 
 export interface TimelineItem {

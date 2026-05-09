@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useEditorStore } from '../store/useEditorStore'
 import type { TextOverlay, Transform, Effects, Animation, AnimEffect, Transition, TransitionType, KeyframeTrack, KenBurns } from '../types'
 import { DEFAULT_TRANSFORM, DEFAULT_EFFECTS, DEFAULT_ANIMATION, DEFAULT_TRANSITION, DEFAULT_KEN_BURNS } from '../types'
@@ -565,14 +565,70 @@ function EffectsSection({ effects: base, effective: e, update, clipTime, kfTrack
   )
 }
 
+// ── Focal Point Picker ────────────────────────────────────────────────────────
+function FocalPointPicker({ x, y, onChange }: { x: number; y: number; onChange: (x: number, y: number) => void }) {
+  const boxRef = useRef<HTMLDivElement>(null)
+  const dragging = useRef(false)
+  const onChangeRef = useRef(onChange)
+  onChangeRef.current = onChange
+
+  useEffect(() => {
+    function onMove(e: MouseEvent) {
+      if (!dragging.current || !boxRef.current) return
+      const r = boxRef.current.getBoundingClientRect()
+      onChangeRef.current(
+        Math.round(Math.max(0, Math.min(100, (e.clientX - r.left) / r.width * 100)) * 10) / 10,
+        Math.round(Math.max(0, Math.min(100, (e.clientY - r.top) / r.height * 100)) * 10) / 10,
+      )
+    }
+    function onUp() { dragging.current = false }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp) }
+  }, [])
+
+  function pickAt(e: React.MouseEvent) {
+    if (!boxRef.current) return
+    const r = boxRef.current.getBoundingClientRect()
+    onChangeRef.current(
+      Math.round(Math.max(0, Math.min(100, (e.clientX - r.left) / r.width * 100)) * 10) / 10,
+      Math.round(Math.max(0, Math.min(100, (e.clientY - r.top) / r.height * 100)) * 10) / 10,
+    )
+  }
+
+  return (
+    <div
+      ref={boxRef}
+      style={{ position: 'relative', width: '100%', height: 72, background: '#151515', border: '1px solid #333', borderRadius: 4, cursor: 'crosshair', userSelect: 'none' }}
+      onMouseDown={e => { dragging.current = true; pickAt(e) }}
+    >
+      {/* Rule-of-thirds grid */}
+      {[33.3, 66.6].map(p => <div key={`v${p}`} style={{ position: 'absolute', left: `${p}%`, top: 0, bottom: 0, width: 1, background: '#252525' }} />)}
+      {[33.3, 66.6].map(p => <div key={`h${p}`} style={{ position: 'absolute', top: `${p}%`, left: 0, right: 0, height: 1, background: '#252525' }} />)}
+      {/* Focal dot */}
+      <div style={{
+        position: 'absolute', left: `${x}%`, top: `${y}%`,
+        transform: 'translate(-50%, -50%)',
+        width: 11, height: 11, borderRadius: '50%',
+        background: '#4af', border: '2px solid #fff',
+        boxShadow: '0 0 0 1px rgba(0,0,0,0.6)',
+        pointerEvents: 'none',
+      }} />
+      <span style={{ position: 'absolute', bottom: 3, right: 5, fontSize: 10, color: '#444', pointerEvents: 'none' }}>
+        {Math.round(x)}% {Math.round(y)}%
+      </span>
+    </div>
+  )
+}
+
 // ── Ken Burns Section ─────────────────────────────────────────────────────────
 const KB_PRESETS: Array<{ label: string; kb: KenBurns }> = [
-  { label: 'Zoom In',  kb: { startScale: 1.0, endScale: 1.2,  startX: 0,  startY: 0,  endX: 0,  endY: 0  } },
-  { label: 'Zoom Out', kb: { startScale: 1.2, endScale: 1.0,  startX: 0,  startY: 0,  endX: 0,  endY: 0  } },
-  { label: 'Pan →',    kb: { startScale: 1.08, endScale: 1.08, startX: -5, startY: 0, endX: 5,  endY: 0  } },
-  { label: 'Pan ←',    kb: { startScale: 1.08, endScale: 1.08, startX: 5,  startY: 0, endX: -5, endY: 0  } },
-  { label: 'Pan ↓',    kb: { startScale: 1.08, endScale: 1.08, startX: 0,  startY: -5, endX: 0, endY: 5  } },
-  { label: 'Pan ↑',    kb: { startScale: 1.08, endScale: 1.08, startX: 0,  startY: 5,  endX: 0, endY: -5 } },
+  { label: 'Zoom In',  kb: { startScale: 1.0,  endScale: 1.2,  startX: 0,  startY: 0,  endX: 0,  endY: 0,  focalX: 50, focalY: 50 } },
+  { label: 'Zoom Out', kb: { startScale: 1.2,  endScale: 1.0,  startX: 0,  startY: 0,  endX: 0,  endY: 0,  focalX: 50, focalY: 50 } },
+  { label: 'Pan →',    kb: { startScale: 1.08, endScale: 1.08, startX: -5, startY: 0,  endX: 5,  endY: 0,  focalX: 50, focalY: 50 } },
+  { label: 'Pan ←',    kb: { startScale: 1.08, endScale: 1.08, startX: 5,  startY: 0,  endX: -5, endY: 0,  focalX: 50, focalY: 50 } },
+  { label: 'Pan ↓',    kb: { startScale: 1.08, endScale: 1.08, startX: 0,  startY: -5, endX: 0,  endY: 5,  focalX: 50, focalY: 50 } },
+  { label: 'Pan ↑',    kb: { startScale: 1.08, endScale: 1.08, startX: 0,  startY: 5,  endX: 0,  endY: -5, focalX: 50, focalY: 50 } },
 ]
 
 function KenBurnsSection({ kenBurns, update, flat }: {
@@ -611,9 +667,17 @@ function KenBurnsSection({ kenBurns, update, flat }: {
           <TRow label="Y" min={-50} max={50} step={0.5} value={+kb.startY.toFixed(1)} unit="%" onChange={v => update({ ...kb, startY: v })} onReset={() => update({ ...kb, startY: 0 })} speed={0.4} />
           <TRow label="Y" min={-50} max={50} step={0.5} value={+kb.endY.toFixed(1)}   unit="%" onChange={v => update({ ...kb, endY:   v })} onReset={() => update({ ...kb, endY:   0 })} speed={0.4} />
 
+          <div style={{ gridColumn: 'span 2', marginTop: 4 }}>
+            <span style={{ ...styles.tCellLabel, display: 'block', marginBottom: 5 }}>Focal Point</span>
+            <FocalPointPicker
+              x={kb.focalX ?? 50} y={kb.focalY ?? 50}
+              onChange={(x, y) => update({ ...kb, focalX: x, focalY: y })}
+            />
+          </div>
+
           <button
             style={{ gridColumn: 'span 2', background: '#1a1a24', border: '1px solid #26263a', color: '#777', padding: '6px 0', borderRadius: 4, cursor: 'pointer', fontSize: 11, marginTop: 2 }}
-            onClick={() => update({ startScale: kb.endScale, endScale: kb.startScale, startX: kb.endX, startY: kb.endY, endX: kb.startX, endY: kb.startY })}
+            onClick={() => update({ ...kb, startScale: kb.endScale, endScale: kb.startScale, startX: kb.endX, startY: kb.endY, endX: kb.startX, endY: kb.startY })}
           >
             ⇅ Swap Start / End
           </button>

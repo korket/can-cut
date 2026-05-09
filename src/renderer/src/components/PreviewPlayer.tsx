@@ -67,10 +67,12 @@ function applyKenBurns(kb: KenBurns | undefined, clipTime: number, clipDuration:
   const scale = kb.startScale + (kb.endScale - kb.startScale) * p
   return {
     ...t,
-    scaleX: t.scaleX * scale,
-    scaleY: t.scaleY * scale,
-    posX:   t.posX + kb.startX + (kb.endX - kb.startX) * p,
-    posY:   t.posY + kb.startY + (kb.endY - kb.startY) * p,
+    scaleX:  t.scaleX * scale,
+    scaleY:  t.scaleY * scale,
+    posX:    t.posX + kb.startX + (kb.endX - kb.startX) * p,
+    posY:    t.posY + kb.startY + (kb.endY - kb.startY) * p,
+    anchorX: (kb.focalX ?? 50) / 100,
+    anchorY: (kb.focalY ?? 50) / 100,
   }
 }
 
