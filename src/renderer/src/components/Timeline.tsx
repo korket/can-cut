@@ -1,10 +1,21 @@
 import { useRef, useCallback, useEffect, useState, Fragment } from 'react'
 import { useEditorStore } from '../store/useEditorStore'
+import type { TransitionType } from '../types'
+import { DEFAULT_TRANSITION } from '../types'
 import { importAndAddClips } from '../utils/importClip'
 import { nanoid } from '../utils/nanoid'
 import { getWaveform } from '../utils/waveform'
 import { snapToFrame, frameDurationMs } from '../utils/frame'
 import { allKeyframeTimes } from '../utils/keyframes'
+
+const TRANSITION_TYPES: Array<{ type: TransitionType; label: string }> = [
+  { type: 'crossfade',  label: 'Crossfade' },
+  { type: 'fade-color', label: 'Fade ◻'   },
+  { type: 'wipe-left',  label: '← Wipe'   },
+  { type: 'wipe-right', label: 'Wipe →'   },
+  { type: 'wipe-up',    label: '↑ Wipe'   },
+  { type: 'wipe-down',  label: '↓ Wipe'   },
+]
 
 const TRACK_HEIGHT = 44
 const RULER_HEIGHT = 24
@@ -20,12 +31,18 @@ function formatRulerTime(ms: number) {
 
 export default function Timeline() {
   const {
-    clips, timelineItems, removeTimelineItem, updateTimelineItem,
+    clips, timelineItems, removeTimelineItem, updateTimelineItem, updateTransition,
     currentTime, setCurrentTime, setIsPlaying,
     tool, zoom, setZoom, getTimelineDuration,
     videoTrackCount, audioTrackCount, addVideoTrack, addAudioTrack,
     selectedId, setSelectedId, fps,
   } = useEditorStore()
+
+  const [transitionPopup, setTransitionPopup] = useState<{ itemId: string; rect: DOMRect } | null>(null)
+
+  function openTransitionPopup(itemId: string, rect: DOMRect) {
+    setTransitionPopup({ itemId, rect })
+  }
 
   const containerRef = useRef<HTMLDivElement>(null)   // tracks scroll area
   const rulerRef     = useRef<HTMLDivElement>(null)   // ruler scroll area (horiz only)
@@ -277,6 +294,7 @@ export default function Timeline() {
   }
 
   function handleTrackDragOver(e: React.DragEvent, trackIdx: number) {
+    if (e.dataTransfer.types.includes('transition-type')) { e.dataTransfer.dropEffect = 'none'; return }
     const clipType = e.dataTransfer.getData('text/x-clip-type')
     if (clipType && !clipFitsTrack(clipType, trackIdx)) { e.dataTransfer.dropEffect = 'none'; return }
     e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; setDragOverTrack(trackIdx)
@@ -299,6 +317,19 @@ export default function Timeline() {
           <button style={styles.zoomBtn} onClick={() => setZoom(zoom + 20)}>+</button>
           <button style={{ ...styles.snapBtn, ...(snapEnabled ? styles.snapActive : {}) }} onClick={() => setSnapEnabled(!snapEnabled)}>Snap</button>
         </div>
+      </div>
+
+      {/* Transitions tray */}
+      <div style={styles.transitionsTray}>
+        <span style={styles.trayLabel}>Transitions</span>
+        {TRANSITION_TYPES.map(({ type, label }) => (
+          <div
+            key={type}
+            draggable
+            onDragStart={e => { e.dataTransfer.setData('transition-type', type); e.dataTransfer.effectAllowed = 'copy' }}
+            style={styles.trayChip}
+          >{label}</div>
+        ))}
       </div>
 
       {/* Body: headers + scrollable content */}
@@ -377,7 +408,8 @@ export default function Timeline() {
                     dragOverTrack={dragOverTrack} selectedId={selectedId} setSelectedId={setSelectedId} onClipMouseDown={onClipMouseDown}
                     onResizeMouseDown={onResizeMouseDown} removeTimelineItem={removeTimelineItem}
                     handleTrackDrop={handleTrackDrop} handleTrackDragOver={handleTrackDragOver}
-                    handleTrackDragLeave={handleTrackDragLeave} />
+                    handleTrackDragLeave={handleTrackDragLeave}
+                    updateTransition={updateTransition} onTransitionChipClick={openTransitionPopup} />
                 )
               })}
 
@@ -390,7 +422,8 @@ export default function Timeline() {
                   dragOverTrack={dragOverTrack} selectedId={selectedId} setSelectedId={setSelectedId} onClipMouseDown={onClipMouseDown}
                   onResizeMouseDown={onResizeMouseDown} removeTimelineItem={removeTimelineItem}
                   handleTrackDrop={handleTrackDrop} handleTrackDragOver={handleTrackDragOver}
-                  handleTrackDragLeave={handleTrackDragLeave} />
+                  handleTrackDragLeave={handleTrackDragLeave}
+                  updateTransition={updateTransition} onTransitionChipClick={openTransitionPopup} />
               ))}
 
               {/* Snap indicator */}
@@ -407,7 +440,63 @@ export default function Timeline() {
           </div>
         </div>
       </div>
+
+      {transitionPopup && (
+        <TransitionPopup
+          itemId={transitionPopup.itemId}
+          rect={transitionPopup.rect}
+          onClose={() => setTransitionPopup(null)}
+        />
+      )}
     </div>
+  )
+}
+
+// ── TransitionPopup ───────────────────────────────────────────────────────────
+function TransitionPopup({ itemId, rect, onClose }: { itemId: string; rect: DOMRect; onClose: () => void }) {
+  const { timelineItems, updateTransition } = useEditorStore()
+  const item = timelineItems.find(i => i.id === itemId)
+  if (!item) return null
+  const tr = { ...DEFAULT_TRANSITION, ...item.transitionIn }
+
+  const left = Math.min(rect.left - 60, window.innerWidth - 220)
+  const top  = rect.bottom + 6
+
+  return (
+    <>
+      <div style={{ position: 'fixed', inset: 0, zIndex: 999 }} onClick={onClose} />
+      <div style={{ position: 'fixed', left, top, width: 204, background: '#1e1e1e', border: '1px solid #444', borderRadius: 8, padding: '10px 12px', zIndex: 1000, boxShadow: '0 4px 20px rgba(0,0,0,0.6)' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 10 }}>
+          {TRANSITION_TYPES.map(({ type, label }) => (
+            <button key={type}
+              style={{ padding: '3px 8px', fontSize: 11, background: tr.type === type ? '#2d1560' : '#2a2a2a', border: `1px solid ${tr.type === type ? '#7040e0' : '#3a3a3a'}`, color: tr.type === type ? '#c0a0ff' : '#888', borderRadius: 4, cursor: 'pointer' }}
+              onClick={() => updateTransition(itemId, { type })}
+            >{label}</button>
+          ))}
+        </div>
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#888', marginBottom: 4 }}>
+            <span>Duration</span><span>{(tr.duration / 1000).toFixed(1)}s</span>
+          </div>
+          <input type="range" min={100} max={3000} step={100} value={tr.duration}
+            onChange={e => updateTransition(itemId, { duration: Number(e.target.value) })}
+            style={{ width: '100%' }} />
+        </div>
+        {tr.type === 'fade-color' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <span style={{ fontSize: 11, color: '#888' }}>Color</span>
+            <input type="color" value={tr.color} onChange={e => updateTransition(itemId, { color: e.target.value })}
+              style={{ width: 32, height: 22, padding: 0, border: 'none', background: 'none', cursor: 'pointer' }} />
+          </div>
+        )}
+        {item.transitionIn && (
+          <button
+            style={{ width: '100%', padding: '5px 0', background: 'none', border: '1px solid #3a1818', color: '#c05050', borderRadius: 4, cursor: 'pointer', fontSize: 11, marginTop: 2 }}
+            onClick={() => { updateTransition(itemId, null); onClose() }}
+          >Remove Transition</button>
+        )}
+      </div>
+    </>
   )
 }
 
@@ -507,9 +596,11 @@ interface TrackRowProps {
   handleTrackDrop: (e: React.DragEvent, idx: number) => void
   handleTrackDragOver: (e: React.DragEvent, idx: number) => void
   handleTrackDragLeave: (e: React.DragEvent) => void
+  updateTransition: (id: string, changes: any) => void
+  onTransitionChipClick: (itemId: string, rect: DOMRect) => void
 }
 
-function TrackRow({ trackIdx, trackHeight, clips, timelineItems, msToPx, dragOverTrack, selectedId, setSelectedId, onClipMouseDown, onResizeMouseDown, removeTimelineItem, handleTrackDrop, handleTrackDragOver, handleTrackDragLeave }: TrackRowProps) {
+function TrackRow({ trackIdx, trackHeight, clips, timelineItems, msToPx, dragOverTrack, selectedId, setSelectedId, onClipMouseDown, onResizeMouseDown, removeTimelineItem, handleTrackDrop, handleTrackDragOver, handleTrackDragLeave, updateTransition, onTransitionChipClick }: TrackRowProps) {
   return (
     <div
       data-track={trackIdx}
@@ -540,18 +631,27 @@ function TrackRow({ trackIdx, trackHeight, clips, timelineItems, msToPx, dragOve
               <div
                 style={{
                   position: 'absolute', zIndex: 6,
-                  left: msToPx(item.startTime) - 9,
+                  left: msToPx(item.startTime) - 11,
                   top: '50%', transform: 'translateY(-50%)',
-                  width: 18, height: 18,
-                  background: hasTr ? '#2d1560' : '#1e1e1e',
-                  border: `1px solid ${hasTr ? '#7040e0' : '#383838'}`,
-                  borderRadius: 3, cursor: 'pointer',
+                  width: 22, height: 22,
+                  background: hasTr ? '#2d1560' : '#1a1a1a',
+                  border: `1px solid ${hasTr ? '#7040e0' : '#333'}`,
+                  borderRadius: 4, cursor: 'pointer',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                 }}
-                onMouseDown={e => { e.stopPropagation(); setSelectedId(item.id) }}
-                title={hasTr ? item.transitionIn!.type : 'Click to add transition'}
+                onMouseDown={e => e.stopPropagation()}
+                onClick={e => { e.stopPropagation(); onTransitionChipClick(item.id, (e.currentTarget as HTMLElement).getBoundingClientRect()) }}
+                onDragOver={e => { if (e.dataTransfer.types.includes('transition-type')) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy' } }}
+                onDrop={e => {
+                  e.preventDefault(); e.stopPropagation()
+                  const type = e.dataTransfer.getData('transition-type') as TransitionType
+                  if (type) updateTransition(item.id, { type, duration: item.transitionIn?.duration ?? DEFAULT_TRANSITION.duration, color: item.transitionIn?.color ?? DEFAULT_TRANSITION.color })
+                }}
+                title={hasTr ? item.transitionIn!.type : 'Drag a transition here or click to set'}
               >
-                <span style={{ fontSize: 9, color: hasTr ? '#a080ff' : '#555', pointerEvents: 'none', lineHeight: 1 }}>⟨⟩</span>
+                <span style={{ fontSize: 9, color: hasTr ? '#a080ff' : '#444', pointerEvents: 'none', lineHeight: 1 }}>
+                  {hasTr ? '◈' : '+'}
+                </span>
               </div>
             )}
 
@@ -656,4 +756,8 @@ const styles: Record<string, React.CSSProperties> = {
   playheadBar:  { position: 'absolute', top: 0, width: 16, marginLeft: -8, background: 'transparent', zIndex: 10, pointerEvents: 'none' },
   playheadLine: { position: 'absolute', top: 0, bottom: 0, left: '50%', width: 2, marginLeft: -1, background: '#e63950', pointerEvents: 'none' },
   playheadHead: { width: 12, height: 12, background: '#e63950', borderRadius: '50%', position: 'absolute', top: -4, left: 2, pointerEvents: 'none' },
+
+  transitionsTray: { display: 'flex', alignItems: 'center', gap: 5, padding: '5px 14px', background: '#0f0f0f', borderBottom: '1px solid #1e1e1e', flexShrink: 0, overflowX: 'auto' },
+  trayLabel:       { fontSize: 11, color: '#444', marginRight: 6, whiteSpace: 'nowrap', userSelect: 'none' },
+  trayChip:        { padding: '3px 9px', background: '#1e1e1e', border: '1px solid #333', borderRadius: 4, cursor: 'grab', fontSize: 11, color: '#999', whiteSpace: 'nowrap', userSelect: 'none' },
 }
