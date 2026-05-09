@@ -8,7 +8,8 @@ import { getWaveform } from '../utils/waveform'
 import { snapToFrame, frameDurationMs } from '../utils/frame'
 import { allKeyframeTimes } from '../utils/keyframes'
 
-const TRANSITION_TYPES: Array<{ type: TransitionType; label: string }> = [
+const TRANSITION_TYPES: Array<{ type: TransitionType | 'cut'; label: string }> = [
+  { type: 'cut',        label: 'Cut'       },
   { type: 'crossfade',  label: 'Crossfade' },
   { type: 'fade-color', label: 'Fade ◻'   },
   { type: 'wipe-left',  label: '← Wipe'   },
@@ -458,6 +459,7 @@ function TransitionPopup({ itemId, rect, onClose }: { itemId: string; rect: DOMR
   const item = timelineItems.find(i => i.id === itemId)
   if (!item) return null
   const tr = { ...DEFAULT_TRANSITION, ...item.transitionIn }
+  const activeType = item.transitionIn ? item.transitionIn.type : 'cut'
 
   const left = Math.min(rect.left - 60, window.innerWidth - 220)
   const top  = rect.bottom + 6
@@ -467,33 +469,34 @@ function TransitionPopup({ itemId, rect, onClose }: { itemId: string; rect: DOMR
       <div style={{ position: 'fixed', inset: 0, zIndex: 999 }} onClick={onClose} />
       <div style={{ position: 'fixed', left, top, width: 204, background: '#1e1e1e', border: '1px solid #444', borderRadius: 8, padding: '10px 12px', zIndex: 1000, boxShadow: '0 4px 20px rgba(0,0,0,0.6)' }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 10 }}>
-          {TRANSITION_TYPES.map(({ type, label }) => (
-            <button key={type}
-              style={{ padding: '3px 8px', fontSize: 11, background: tr.type === type ? '#2d1560' : '#2a2a2a', border: `1px solid ${tr.type === type ? '#7040e0' : '#3a3a3a'}`, color: tr.type === type ? '#c0a0ff' : '#888', borderRadius: 4, cursor: 'pointer' }}
-              onClick={() => updateTransition(itemId, { type })}
-            >{label}</button>
-          ))}
+          {TRANSITION_TYPES.map(({ type, label }) => {
+            const active = type === activeType
+            return (
+              <button key={type}
+                style={{ padding: '3px 8px', fontSize: 11, background: active ? '#2d1560' : '#2a2a2a', border: `1px solid ${active ? '#7040e0' : '#3a3a3a'}`, color: active ? '#c0a0ff' : '#888', borderRadius: 4, cursor: 'pointer' }}
+                onClick={() => type === 'cut' ? updateTransition(itemId, null) : updateTransition(itemId, { type: type as TransitionType })}
+              >{label}</button>
+            )
+          })}
         </div>
-        <div style={{ marginBottom: 8 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#888', marginBottom: 4 }}>
-            <span>Duration</span><span>{(tr.duration / 1000).toFixed(1)}s</span>
-          </div>
-          <input type="range" min={100} max={3000} step={100} value={tr.duration}
-            onChange={e => updateTransition(itemId, { duration: Number(e.target.value) })}
-            style={{ width: '100%' }} />
-        </div>
-        {tr.type === 'fade-color' && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-            <span style={{ fontSize: 11, color: '#888' }}>Color</span>
-            <input type="color" value={tr.color} onChange={e => updateTransition(itemId, { color: e.target.value })}
-              style={{ width: 32, height: 22, padding: 0, border: 'none', background: 'none', cursor: 'pointer' }} />
-          </div>
-        )}
-        {item.transitionIn && (
-          <button
-            style={{ width: '100%', padding: '5px 0', background: 'none', border: '1px solid #3a1818', color: '#c05050', borderRadius: 4, cursor: 'pointer', fontSize: 11, marginTop: 2 }}
-            onClick={() => { updateTransition(itemId, null); onClose() }}
-          >Remove Transition</button>
+        {activeType !== 'cut' && (
+          <>
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#888', marginBottom: 4 }}>
+                <span>Duration</span><span>{(tr.duration / 1000).toFixed(1)}s</span>
+              </div>
+              <input type="range" min={100} max={3000} step={100} value={tr.duration}
+                onChange={e => updateTransition(itemId, { duration: Number(e.target.value) })}
+                style={{ width: '100%' }} />
+            </div>
+            {tr.type === 'fade-color' && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 11, color: '#888' }}>Color</span>
+                <input type="color" value={tr.color} onChange={e => updateTransition(itemId, { color: e.target.value })}
+                  style={{ width: 32, height: 22, padding: 0, border: 'none', background: 'none', cursor: 'pointer' }} />
+              </div>
+            )}
+          </>
         )}
       </div>
     </>
