@@ -36,7 +36,7 @@ export async function importClip(path: string): Promise<MediaClip | null> {
         id: nanoid(),
         name,
         path,
-        duration: 5000,
+        duration: 3_600_000, // images have no real duration; allow up to 1 h on timeline
         width,
         height,
         fps: 30,

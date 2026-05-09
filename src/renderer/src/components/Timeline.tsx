@@ -325,11 +325,15 @@ export default function Timeline() {
       return defaultTransformEnabled && clipType !== 'audio' ? { transform: { ...defaultTransform } } : {}
     }
 
+    function defaultTrimEnd(clip: { type: string; duration: number }) {
+      return clip.type === 'image' ? Math.min(5000, clip.duration) : clip.duration
+    }
+
     const clipId = e.dataTransfer.getData('text/x-clip-id')
     if (clipId) {
       const clip = clips.find(c => c.id === clipId)
       if (clip && clipFitsTrack(clip.type, trackIdx))
-        addTimelineItem({ id: nanoid(), clipId: clip.id, trackIndex: trackIdx, startTime: dropTime, trimStart: 0, trimEnd: clip.duration, ...defTransform(clip.type) })
+        addTimelineItem({ id: nanoid(), clipId: clip.id, trackIndex: trackIdx, startTime: dropTime, trimStart: 0, trimEnd: defaultTrimEnd(clip), ...defTransform(clip.type) })
       return
     }
 
@@ -338,8 +342,9 @@ export default function Timeline() {
     const imported = await importAndAddClips(paths)
     for (const clip of imported) {
       if (!clipFitsTrack(clip.type, trackIdx)) continue
-      addTimelineItem({ id: nanoid(), clipId: clip.id, trackIndex: trackIdx, startTime: dropTime, trimStart: 0, trimEnd: clip.duration, ...defTransform(clip.type) })
-      dropTime += clip.duration
+      const trimEnd = defaultTrimEnd(clip)
+      addTimelineItem({ id: nanoid(), clipId: clip.id, trackIndex: trackIdx, startTime: dropTime, trimStart: 0, trimEnd, ...defTransform(clip.type) })
+      dropTime += trimEnd
     }
   }
 
