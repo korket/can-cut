@@ -129,7 +129,7 @@ export default function PreviewPlayer() {
   const {
     clips, timelineItems, textOverlays,
     currentTime, setCurrentTime, isPlaying, setIsPlaying,
-    getTimelineDuration, fps, selectedId, updateTransform,
+    getTimelineDuration, fps, selectedId, updateTransform, updateTimelineItem,
   } = useEditorStore()
 
   // Pool: keyed by item.id for active clips, "${item.id}_out" for frozen outgoing clips
@@ -154,7 +154,23 @@ export default function PreviewPlayer() {
   const prevVideoIds = useRef(new Set<string>())
 
   const [transformMode, setTransformMode] = useState(false)
+  const [focalMode, setFocalMode] = useState(false)
   const viewportRef = useRef<HTMLDivElement>(null)
+
+  const selectedItem = selectedId ? timelineItems.find(i => i.id === selectedId) ?? null : null
+  const selectedClip = selectedItem ? clips.find(c => c.id === selectedItem.clipId) ?? null : null
+  const selectedHasKB = !!(selectedItem?.kenBurns)
+
+  // Exit focal mode automatically when selection changes or KB is removed
+  useEffect(() => { if (!selectedHasKB) setFocalMode(false) }, [selectedHasKB])
+
+  function handleFocalPointer(e: React.MouseEvent<HTMLDivElement>) {
+    if (!viewportRef.current || !selectedItem?.kenBurns) return
+    const r = viewportRef.current.getBoundingClientRect()
+    const x = Math.round(Math.max(0, Math.min(100, (e.clientX - r.left) / r.width  * 100)) * 10) / 10
+    const y = Math.round(Math.max(0, Math.min(100, (e.clientY - r.top)  / r.height * 100)) * 10) / 10
+    updateTimelineItem(selectedItem.id, { kenBurns: { ...selectedItem.kenBurns, focalX: x, focalY: y } })
+  }
 
   const duration = getTimelineDuration()
 
@@ -411,11 +427,33 @@ export default function PreviewPlayer() {
 
               {activeTextOverlays.map(o => <TextOverlayEl key={o.id} overlay={o} />)}
 
-              {transformMode && (() => {
-                const selItem = selectedId ? timelineItems.find(i => i.id === selectedId) : null
-                const selClip = selItem ? clips.find(c => c.id === selItem.clipId) : null
-                if (!selItem || !selClip || selClip.type === 'audio') return null
-                return <TransformOverlay item={selItem} viewportEl={viewportRef.current} onUpdate={c => updateTransform(selItem.id, c)} />
+              {transformMode && selectedItem && selectedClip && selectedClip.type !== 'audio' && (
+                <TransformOverlay item={selectedItem} viewportEl={viewportRef.current} onUpdate={c => updateTransform(selectedItem.id, c)} />
+              )}
+
+              {focalMode && selectedItem?.kenBurns && (() => {
+                const fx = selectedItem.kenBurns.focalX ?? 50
+                const fy = selectedItem.kenBurns.focalY ?? 50
+                return (
+                  <div
+                    style={{ position: 'absolute', inset: 0, cursor: 'crosshair', zIndex: 20 }}
+                    onMouseDown={handleFocalPointer}
+                    onMouseMove={e => { if (e.buttons === 1) handleFocalPointer(e) }}
+                  >
+                    {/* Crosshair lines */}
+                    <div style={{ position: 'absolute', left: `${fx}%`, top: 0, bottom: 0, width: 1, background: 'rgba(255,255,255,0.35)', pointerEvents: 'none' }} />
+                    <div style={{ position: 'absolute', top: `${fy}%`, left: 0, right: 0, height: 1, background: 'rgba(255,255,255,0.35)', pointerEvents: 'none' }} />
+                    {/* Focal dot */}
+                    <div style={{
+                      position: 'absolute', left: `${fx}%`, top: `${fy}%`,
+                      transform: 'translate(-50%, -50%)',
+                      width: 14, height: 14, borderRadius: '50%',
+                      background: '#4af', border: '2px solid #fff',
+                      boxShadow: '0 0 0 1px rgba(0,0,0,0.5)',
+                      pointerEvents: 'none',
+                    }} />
+                  </div>
+                )
               })()}
             </>
           )}
@@ -431,10 +469,17 @@ export default function PreviewPlayer() {
         />
         <span style={styles.time}>{formatTimecode(duration, fps)}</span>
         <button
-          onClick={() => setTransformMode(m => !m)}
+          onClick={() => { setTransformMode(m => !m); setFocalMode(false) }}
           style={{ ...styles.transformToggle, ...(transformMode ? styles.transformToggleOn : {}) }}
           title="Toggle transform handles"
         >⊹</button>
+        {selectedHasKB && (
+          <button
+            onClick={() => { setFocalMode(m => !m); setTransformMode(false) }}
+            style={{ ...styles.transformToggle, ...(focalMode ? styles.transformToggleOn : {}), fontSize: 16 }}
+            title="Set Ken Burns focal point"
+          >◎</button>
+        )}
       </div>
     </div>
   )
