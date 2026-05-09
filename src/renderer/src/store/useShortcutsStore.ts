@@ -1,5 +1,4 @@
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
 
 export interface Shortcut {
   id: string
@@ -25,25 +24,44 @@ export const DEFAULT_SHORTCUTS: Shortcut[] = [
   { id: 'export',         label: 'Export',               key: 'e',          ctrl: true,  shift: false, alt: false },
 ]
 
+const STORAGE_KEY = 'can-cut-shortcuts'
+
+function loadShortcuts(): Shortcut[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (!raw) return DEFAULT_SHORTCUTS
+    const saved: Shortcut[] = JSON.parse(raw)
+    // Merge: pick up any new defaults, keep user overrides for existing ones
+    return DEFAULT_SHORTCUTS.map(def => saved.find(s => s.id === def.id) ?? def)
+  } catch {
+    return DEFAULT_SHORTCUTS
+  }
+}
+
+function saveShortcuts(shortcuts: Shortcut[]) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(shortcuts))
+}
+
 interface ShortcutsStore {
   shortcuts: Shortcut[]
   setShortcut: (id: string, shortcut: Partial<Shortcut>) => void
   resetAll: () => void
 }
 
-export const useShortcutsStore = create<ShortcutsStore>()(
-  persist(
-    (set) => ({
-      shortcuts: DEFAULT_SHORTCUTS,
-      setShortcut: (id, changes) =>
-        set((s) => ({
-          shortcuts: s.shortcuts.map((sc) => (sc.id === id ? { ...sc, ...changes } : sc))
-        })),
-      resetAll: () => set({ shortcuts: DEFAULT_SHORTCUTS })
+export const useShortcutsStore = create<ShortcutsStore>()((set) => ({
+  shortcuts: loadShortcuts(),
+  setShortcut: (id, changes) =>
+    set((s) => {
+      const shortcuts = s.shortcuts.map((sc) => (sc.id === id ? { ...sc, ...changes } : sc))
+      saveShortcuts(shortcuts)
+      return { shortcuts }
     }),
-    { name: 'can-cut-shortcuts' }
-  )
-)
+  resetAll: () =>
+    set(() => {
+      saveShortcuts(DEFAULT_SHORTCUTS)
+      return { shortcuts: DEFAULT_SHORTCUTS }
+    }),
+}))
 
 export function formatShortcut(sc: Shortcut): string {
   const parts: string[] = []
