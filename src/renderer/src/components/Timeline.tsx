@@ -159,16 +159,32 @@ export default function Timeline() {
     if (!item) return
     const clip = useEditorStore.getState().clips.find(c => c.id === item.clipId)
     if (!clip) return
+
+    const sameTrack = timelineItems.filter(i => i.id !== id && i.trackIndex === item.trackIndex)
+
     if (edge === 'right') {
-      const rawEnd = item.startTime + Math.min(clip.duration - item.trimStart, Math.max(minDur, origTrimEnd - origTrimStart + dx))
+      const nextItem = sameTrack
+        .filter(i => i.startTime > item.startTime)
+        .sort((a, b) => a.startTime - b.startTime)[0]
+      const maxEnd = nextItem ? nextItem.startTime : Infinity
+
+      const rawEnd = Math.min(
+        item.startTime + Math.min(clip.duration - item.trimStart, Math.max(minDur, origTrimEnd - origTrimStart + dx)),
+        maxEnd,
+      )
       const snappedEnd = trySnap(snapToFrame(rawEnd, curFps), id)
       updateTimelineItem(id, { trimEnd: Math.min(clip.duration, origTrimStart + Math.max(minDur, snappedEnd - item.startTime)) })
     } else {
-      const rawStart = snapToFrame(Math.max(0, origItemStart + dx), curFps)
+      const prevItem = sameTrack
+        .filter(i => i.startTime + (i.trimEnd - i.trimStart) <= origItemStart + 1)
+        .sort((a, b) => (b.startTime + (b.trimEnd - b.trimStart)) - (a.startTime + (a.trimEnd - a.trimStart)))[0]
+      const minStart = prevItem ? prevItem.startTime + (prevItem.trimEnd - prevItem.trimStart) : 0
+
+      const rawStart = snapToFrame(Math.max(minStart, origItemStart + dx), curFps)
       const snappedStart = trySnap(rawStart, id)
       const delta = snappedStart - origItemStart
       const newTrimStart = Math.max(0, Math.min(origTrimEnd - minDur, origTrimStart + delta))
-      updateTimelineItem(id, { trimStart: newTrimStart, startTime: Math.max(0, origItemStart + (newTrimStart - origTrimStart)) })
+      updateTimelineItem(id, { trimStart: newTrimStart, startTime: Math.max(minStart, origItemStart + (newTrimStart - origTrimStart)) })
     }
   }, [pxPerMs, timelineItems, snapEnabled, currentTime])
 
