@@ -656,10 +656,24 @@ function KenBurnsSection({ kenBurns, update, clipDurationMs = 0, flat }: {
           <div style={{ gridColumn: 'span 2', display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 4 }}>
             {KB_PRESETS.map(p => (
               <button key={p.label} style={styles.kbPresetBtn} onClick={() => {
+                const durS = clipDurationMs / 1000
                 const scaleDir = Math.sign(p.kb.endScale - p.kb.startScale)
-                if (scaleDir === 0) { update(p.kb); return }  // pan: use preset as-is
-                const scaleDelta = (clipDurationMs / 1000) * 0.01
-                update({ ...p.kb, endScale: p.kb.startScale + scaleDir * scaleDelta })
+                if (scaleDir === 0) {
+                  // Pan preset: fixed scale, auto position at 1%/s
+                  const posDelta = durS
+                  const xDir = Math.sign(p.kb.endX - p.kb.startX)
+                  const yDir = Math.sign(p.kb.endY - p.kb.startY)
+                  update({
+                    ...p.kb,
+                    startX: xDir !== 0 ? -(xDir * posDelta / 2) : 0,
+                    endX:   xDir !== 0 ?  (xDir * posDelta / 2) : 0,
+                    startY: yDir !== 0 ? -(yDir * posDelta / 2) : 0,
+                    endY:   yDir !== 0 ?  (yDir * posDelta / 2) : 0,
+                  })
+                } else {
+                  // Zoom preset: auto scale at 1%/s, fixed position
+                  update({ ...p.kb, endScale: p.kb.startScale + scaleDir * durS * 0.01 })
+                }
               }}>{p.label}</button>
             ))}
           </div>
