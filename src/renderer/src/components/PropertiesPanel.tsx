@@ -656,22 +656,10 @@ function KenBurnsSection({ kenBurns, update, clipDurationMs = 0, flat }: {
           <div style={{ gridColumn: 'span 2', display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 4 }}>
             {KB_PRESETS.map(p => (
               <button key={p.label} style={styles.kbPresetBtn} onClick={() => {
-                const durS = clipDurationMs / 1000
-                // Scale: 1% per second
-                const scaleDelta = durS * 0.01
-                const scaleDir = Math.sign(p.kb.endScale - p.kb.startScale) || 1
-                // Position: 1% per second total travel, symmetric around centre
-                const posDelta = durS * 1.0
-                const xDir = Math.sign(p.kb.endX - p.kb.startX)
-                const yDir = Math.sign(p.kb.endY - p.kb.startY)
-                update({
-                  ...p.kb,
-                  endScale: p.kb.startScale + scaleDir * scaleDelta,
-                  startX: xDir !== 0 ? -(xDir * posDelta / 2) : 0,
-                  endX:   xDir !== 0 ?  (xDir * posDelta / 2) : 0,
-                  startY: yDir !== 0 ? -(yDir * posDelta / 2) : 0,
-                  endY:   yDir !== 0 ?  (yDir * posDelta / 2) : 0,
-                })
+                const scaleDir = Math.sign(p.kb.endScale - p.kb.startScale)
+                if (scaleDir === 0) { update(p.kb); return }  // pan: use preset as-is
+                const scaleDelta = (clipDurationMs / 1000) * 0.01
+                update({ ...p.kb, endScale: p.kb.startScale + scaleDir * scaleDelta })
               }}>{p.label}</button>
             ))}
           </div>
