@@ -668,13 +668,6 @@ function KenBurnsSection({ kenBurns, update, clipDurationMs = 0, flat }: {
 
           <TRow label="Scale" min={50} max={300} step={1} value={Math.round(kb.startScale * 100)} unit="%" onChange={v => update({ ...kb, startScale: v / 100 })} onReset={() => update({ ...kb, startScale: 1 })} />
           <TRow label="Scale" min={50} max={300} step={1} value={Math.round(kb.endScale  * 100)} unit="%" onChange={v => update({ ...kb, endScale:   v / 100 })} onReset={() => update({ ...kb, endScale: 1.15 })} />
-          <button
-            style={{ gridColumn: 'span 2', background: '#1a1a24', border: '1px solid #26263a', color: '#8888cc', padding: '4px 0', borderRadius: 4, cursor: 'pointer', fontSize: 11, marginBottom: 2 }}
-            title={`Set end scale to start scale + ${(clipDurationMs / 1000).toFixed(1)}s × 1% = ${(kb.startScale * 100 + clipDurationMs / 1000).toFixed(1)}%`}
-            onClick={() => update({ ...kb, endScale: kb.startScale + clipDurationMs / 100000 })}
-          >
-            Auto Scale (1%/s → {(kb.startScale * 100 + clipDurationMs / 1000).toFixed(1)}%)
-          </button>
           <TRow label="X" min={-50} max={50} step={0.5} value={+kb.startX.toFixed(1)} unit="%" onChange={v => update({ ...kb, startX: v })} onReset={() => update({ ...kb, startX: 0 })} speed={0.4} />
           <TRow label="X" min={-50} max={50} step={0.5} value={+kb.endX.toFixed(1)}   unit="%" onChange={v => update({ ...kb, endX:   v })} onReset={() => update({ ...kb, endX:   0 })} speed={0.4} />
           <TRow label="Y" min={-50} max={50} step={0.5} value={+kb.startY.toFixed(1)} unit="%" onChange={v => update({ ...kb, startY: v })} onReset={() => update({ ...kb, startY: 0 })} speed={0.4} />
