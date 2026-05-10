@@ -626,10 +626,10 @@ function FocalPointPicker({ x, y, onChange }: { x: number; y: number; onChange: 
 const KB_PRESETS: Array<{ label: string; kb: KenBurns }> = [
   { label: 'Zoom In',  kb: { startScale: 1.0,  endScale: 1.2,  startX: 0,  startY: 0,  endX: 0,  endY: 0,  focalX: 50, focalY: 50 } },
   { label: 'Zoom Out', kb: { startScale: 1.2,  endScale: 1.0,  startX: 0,  startY: 0,  endX: 0,  endY: 0,  focalX: 50, focalY: 50 } },
-  { label: 'Pan →',    kb: { startScale: 1.08, endScale: 1.08, startX: -5, startY: 0,  endX: 5,  endY: 0,  focalX: 50, focalY: 50 } },
-  { label: 'Pan ←',    kb: { startScale: 1.08, endScale: 1.08, startX: 5,  startY: 0,  endX: -5, endY: 0,  focalX: 50, focalY: 50 } },
-  { label: 'Pan ↓',    kb: { startScale: 1.08, endScale: 1.08, startX: 0,  startY: -5, endX: 0,  endY: 5,  focalX: 50, focalY: 50 } },
-  { label: 'Pan ↑',    kb: { startScale: 1.08, endScale: 1.08, startX: 0,  startY: 5,  endX: 0,  endY: -5, focalX: 50, focalY: 50 } },
+  { label: 'Pan →',    kb: { startScale: 1.0, endScale: 1.0, startX: -5, startY: 0,  endX: 5,  endY: 0,  focalX: 50, focalY: 50 } },
+  { label: 'Pan ←',    kb: { startScale: 1.0, endScale: 1.0, startX: 5,  startY: 0,  endX: -5, endY: 0,  focalX: 50, focalY: 50 } },
+  { label: 'Pan ↓',    kb: { startScale: 1.0, endScale: 1.0, startX: 0,  startY: -5, endX: 0,  endY: 5,  focalX: 50, focalY: 50 } },
+  { label: 'Pan ↑',    kb: { startScale: 1.0, endScale: 1.0, startX: 0,  startY: 5,  endX: 0,  endY: -5, focalX: 50, focalY: 50 } },
 ]
 
 function KenBurnsSection({ kenBurns, update, clipDurationMs = 0, flat }: {
