@@ -117,9 +117,19 @@ export default function Timeline() {
 
   function onClipMouseDown(e: React.MouseEvent, itemId: string) {
     e.preventDefault(); e.stopPropagation()
-    setSelectedId(itemId)
-    const item = timelineItems.find(i => i.id === itemId)!
-    dragState.current = { id: itemId, startX: e.clientX, origStart: item.startTime, origTrack: item.trackIndex }
+    const { timelineItems: items, addTimelineItem } = useEditorStore.getState()
+    const item = items.find(i => i.id === itemId)!
+    let dragId = itemId
+    if (e.altKey) {
+      const newId = nanoid()
+      addTimelineItem({ ...item, id: newId })
+      dragId = newId
+      setSelectedId(newId)
+      document.body.style.cursor = 'copy'
+    } else {
+      setSelectedId(itemId)
+    }
+    dragState.current = { id: dragId, startX: e.clientX, origStart: item.startTime, origTrack: item.trackIndex }
   }
 
   const onMouseMove = useCallback((e: MouseEvent) => {
@@ -136,7 +146,7 @@ export default function Timeline() {
     useEditorStore.getState().moveTimelineItem(id, snapped, newTrack)
   }, [pxPerMs, snapEnabled, timelineItems, currentTime, videoTrackCount])
 
-  const onMouseUp = useCallback(() => { dragState.current = null; setSnapIndicator(null) }, [])
+  const onMouseUp = useCallback(() => { dragState.current = null; setSnapIndicator(null); document.body.style.cursor = '' }, [])
 
   useEffect(() => {
     window.addEventListener('mousemove', onMouseMove)

@@ -49,12 +49,10 @@ export default function PropertiesPanel() {
     if (selectedClip.type !== 'audio') {
       tabs.push(
         { id: 'transform',  label: 'Transform'  },
-        { id: 'animation',  label: 'Anim'       },
-        { id: 'crop',       label: 'Crop'       },
-        { id: 'effects',    label: 'FX'         },
-        { id: 'ken-burns',  label: 'Ken Burns'  },
+        { id: 'animation',  label: 'Animation'  },
       )
       if (prevItem) tabs.push({ id: 'transition', label: 'Transition' })
+      tabs.push({ id: 'effects', label: 'FX' })
     }
     tabs.push({ id: 'clip', label: 'Clip' })
   }
@@ -111,30 +109,39 @@ export default function PropertiesPanel() {
             )}
 
             {tab === 'transform' && selectedItem && (
-              <TransformSection
-                transform={baseT} effective={effT}
-                update={c => updateTransform(selectedItem.id, c)}
-                clipTime={clipTime} kfTracks={kfTracks}
-                addKf={addKf} removeKf={removeKf}
-                flat
-              />
+              <>
+                <TransformSection
+                  transform={baseT} effective={effT}
+                  update={c => updateTransform(selectedItem.id, c)}
+                  clipTime={clipTime} kfTracks={kfTracks}
+                  addKf={addKf} removeKf={removeKf}
+                  flat
+                />
+                <div style={{ borderTop: '1px solid #222' }}>
+                  <CropSection
+                    transform={baseT}
+                    update={c => updateTransform(selectedItem.id, c)}
+                  />
+                </div>
+              </>
             )}
 
             {tab === 'animation' && selectedItem && (
-              <AnimationSection
-                animation={{ ...DEFAULT_ANIMATION, ...selectedItem.animation }}
-                clipDuration={selectedItem.trimEnd - selectedItem.trimStart}
-                update={c => updateAnimation(selectedItem.id, c)}
-                flat
-              />
-            )}
-
-            {tab === 'crop' && selectedItem && (
-              <CropSection
-                transform={baseT}
-                update={c => updateTransform(selectedItem.id, c)}
-                flat
-              />
+              <>
+                <AnimationSection
+                  animation={{ ...DEFAULT_ANIMATION, ...selectedItem.animation }}
+                  clipDuration={selectedItem.trimEnd - selectedItem.trimStart}
+                  update={c => updateAnimation(selectedItem.id, c)}
+                  flat
+                />
+                {selectedClip && selectedClip.type !== 'audio' && (
+                  <KenBurnsSection
+                    kenBurns={selectedItem.kenBurns}
+                    update={kb => updateTimelineItem(selectedItem.id, { kenBurns: kb })}
+                    clipDurationMs={selectedItem.trimEnd - selectedItem.trimStart}
+                  />
+                )}
+              </>
             )}
 
             {tab === 'effects' && selectedItem && (
@@ -143,15 +150,6 @@ export default function PropertiesPanel() {
                 update={c => updateEffects(selectedItem.id, c)}
                 clipTime={clipTime} kfTracks={kfTracks}
                 addKf={addKf} removeKf={removeKf}
-                flat
-              />
-            )}
-
-            {tab === 'ken-burns' && selectedItem && (
-              <KenBurnsSection
-                kenBurns={selectedItem.kenBurns}
-                update={kb => updateTimelineItem(selectedItem.id, { kenBurns: kb })}
-                clipDurationMs={selectedItem.trimEnd - selectedItem.trimStart}
                 flat
               />
             )}
@@ -477,7 +475,7 @@ function TransformSection({ transform: t, effective: e, update, clipTime, kfTrac
 
 // ── Crop Section ──────────────────────────────────────────────────────────────
 function CropSection({ transform: t, update, flat }: { transform: Transform; update: (c: Partial<Transform>) => void; flat?: boolean }) {
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(true)
 
   const hasCrop = t.cropL > 0 || t.cropR > 0 || t.cropT > 0 || t.cropB > 0
   const reset = () => update({ cropL: 0, cropR: 0, cropT: 0, cropB: 0 })
@@ -638,46 +636,44 @@ function KenBurnsSection({ kenBurns, update, clipDurationMs = 0, flat }: {
   clipDurationMs?: number
   flat?: boolean
 }) {
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(true)
   const enabled = !!kenBurns
   const kb: KenBurns = kenBurns ?? DEFAULT_KEN_BURNS
 
+  const presetRow = (
+    <div style={{ gridColumn: 'span 2', display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 4 }}>
+      <button
+        style={{ ...styles.kbPresetBtn, ...(!enabled ? styles.kbPresetBtnActive : {}) }}
+        onClick={() => update(undefined)}
+      >None</button>
+      {KB_PRESETS.map(p => (
+        <button key={p.label} style={styles.kbPresetBtn} onClick={() => {
+          const durS = clipDurationMs / 1000
+          const scaleDir = Math.sign(p.kb.endScale - p.kb.startScale)
+          if (scaleDir === 0) {
+            const posDelta = durS
+            const xDir = Math.sign(p.kb.endX - p.kb.startX)
+            const yDir = Math.sign(p.kb.endY - p.kb.startY)
+            update({
+              ...p.kb,
+              startX: xDir !== 0 ? -(xDir * posDelta / 2) : 0,
+              endX:   xDir !== 0 ?  (xDir * posDelta / 2) : 0,
+              startY: yDir !== 0 ? -(yDir * posDelta / 2) : 0,
+              endY:   yDir !== 0 ?  (yDir * posDelta / 2) : 0,
+            })
+          } else {
+            update({ ...p.kb, endScale: p.kb.startScale + scaleDir * durS * 0.01 })
+          }
+        }}>{p.label}</button>
+      ))}
+    </div>
+  )
+
   const grid = (
     <div style={styles.transformGrid}>
-      {!enabled ? (
-        <button
-          style={{ gridColumn: 'span 2', background: '#1a2a1a', border: '1px solid #2a5a2a', color: '#6cf87c', padding: '8px 0', borderRadius: 5, cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
-          onClick={() => update({ ...DEFAULT_KEN_BURNS })}
-        >
-          Enable Ken Burns
-        </button>
-      ) : (
+      {presetRow}
+      {enabled && (
         <>
-          <div style={{ gridColumn: 'span 2', display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 4 }}>
-            {KB_PRESETS.map(p => (
-              <button key={p.label} style={styles.kbPresetBtn} onClick={() => {
-                const durS = clipDurationMs / 1000
-                const scaleDir = Math.sign(p.kb.endScale - p.kb.startScale)
-                if (scaleDir === 0) {
-                  // Pan preset: fixed scale, auto position at 1%/s
-                  const posDelta = durS
-                  const xDir = Math.sign(p.kb.endX - p.kb.startX)
-                  const yDir = Math.sign(p.kb.endY - p.kb.startY)
-                  update({
-                    ...p.kb,
-                    startX: xDir !== 0 ? -(xDir * posDelta / 2) : 0,
-                    endX:   xDir !== 0 ?  (xDir * posDelta / 2) : 0,
-                    startY: yDir !== 0 ? -(yDir * posDelta / 2) : 0,
-                    endY:   yDir !== 0 ?  (yDir * posDelta / 2) : 0,
-                  })
-                } else {
-                  // Zoom preset: auto scale at 1%/s, fixed position
-                  update({ ...p.kb, endScale: p.kb.startScale + scaleDir * durS * 0.01 })
-                }
-              }}>{p.label}</button>
-            ))}
-          </div>
-
           <span style={styles.kbGroupLabel}>Start</span>
           <span style={styles.kbGroupLabel}>End</span>
 
@@ -702,15 +698,6 @@ function KenBurnsSection({ kenBurns, update, clipDurationMs = 0, flat }: {
           >
             ⇅ Swap Start / End
           </button>
-
-          {flat && (
-            <button
-              style={{ gridColumn: 'span 2', ...styles.resetAllBtnFull, color: '#a04040', borderColor: '#3a1818' }}
-              onClick={() => update(undefined)}
-            >
-              Remove Ken Burns
-            </button>
-          )}
         </>
       )}
     </div>
@@ -722,10 +709,7 @@ function KenBurnsSection({ kenBurns, update, clipDurationMs = 0, flat }: {
     <div style={styles.section}>
       <div style={styles.sectionRow} onClick={() => setOpen(o => !o)}>
         <span style={{ ...styles.sectionTitle, color: enabled ? '#e6a030' : undefined }}>Ken Burns</span>
-        <div style={{ display: 'flex', gap: 6 }}>
-          {enabled && <button style={styles.resetAllBtn} onClick={e => { e.stopPropagation(); update(undefined) }}>Remove</button>}
-          <span style={styles.chevron}>{open ? '▾' : '▸'}</span>
-        </div>
+        <span style={styles.chevron}>{open ? '▾' : '▸'}</span>
       </div>
       {open && grid}
     </div>
@@ -1055,7 +1039,8 @@ const styles: Record<string, React.CSSProperties> = {
   addTextBtn:  { background: '#162414', border: '1px solid #2abf5a', color: '#5dde76', padding: '9px 0', borderRadius: 5, cursor: 'pointer', fontSize: 13, fontWeight: 600, width: '100%' },
   empty:       { fontSize: 13, color: '#666', textAlign: 'center', padding: '40px 20px', lineHeight: 2, flex: 1 },
   info:        { fontSize: 11, color: '#777', padding: '1px 14px 8px' },
-  kbPresetBtn: { background: '#1a1a24', border: '1px solid #2e2e3e', color: '#aaa', padding: '5px 9px', borderRadius: 4, cursor: 'pointer', fontSize: 11 },
+  kbPresetBtn:       { background: '#1a1a24', border: '1px solid #2e2e3e', color: '#aaa', padding: '5px 9px', borderRadius: 4, cursor: 'pointer', fontSize: 11 },
+  kbPresetBtnActive: { background: '#2d1560', border: '1px solid #7040e0', color: '#c0a0ff' },
   kbGroupLabel:{ fontSize: 11, color: '#888', fontWeight: 700, letterSpacing: 0.8, paddingBottom: 3, marginTop: 4 },
   overlayRow:  { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 14px', cursor: 'pointer', borderRadius: 4, margin: '2px 4px' },
   overlayText: { fontSize: 12, color: '#ccc' },
