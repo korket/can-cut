@@ -711,7 +711,9 @@ function TrackRow({ trackIdx, trackHeight, clips, timelineItems, msToPx, dragOve
         ) : null
         const hasTr = !!item.transitionIn && item.transitionIn.type !== 'cut'
 
-        const chipSize = Math.round(Math.min(22, Math.max(10, trackHeight * 0.5)))
+        const leftClipW  = prevItem ? msToPx(prevItem.trimEnd - prevItem.trimStart) : Infinity
+        const rightClipW = msToPx(item.trimEnd - item.trimStart)
+        const chipSize = Math.round(Math.max(4, Math.min(22, trackHeight * 0.5, Math.min(leftClipW, rightClipW) * 0.6)))
 
         return (
           <Fragment key={item.id}>
