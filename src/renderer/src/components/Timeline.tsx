@@ -2,7 +2,7 @@ import { useRef, useCallback, useEffect, useState, Fragment } from 'react'
 import { useEditorStore } from '../store/useEditorStore'
 import { useShortcutsStore } from '../store/useShortcutsStore'
 import type { TransitionType } from '../types'
-import { DEFAULT_TRANSITION } from '../types'
+import { DEFAULT_TRANSITION, DEFAULT_KEN_BURNS } from '../types'
 import { importAndAddClips } from '../utils/importClip'
 import { nanoid } from '../utils/nanoid'
 import { getWaveform } from '../utils/waveform'
@@ -353,6 +353,10 @@ export default function Timeline() {
       return defaultTransformEnabled && clipType !== 'audio' ? { transform: { ...defaultTransform } } : {}
     }
 
+    function defKenBurns(clipType: string) {
+      return clipType === 'image' ? { kenBurns: { ...DEFAULT_KEN_BURNS } } : {}
+    }
+
     function defaultTrimEnd(clip: { type: string; duration: number }) {
       return clip.type === 'image' ? Math.min(5000, clip.duration) : clip.duration
     }
@@ -361,7 +365,7 @@ export default function Timeline() {
     if (clipId) {
       const clip = clips.find(c => c.id === clipId)
       if (clip && clipFitsTrack(clip.type, trackIdx))
-        addTimelineItem({ id: nanoid(), clipId: clip.id, trackIndex: trackIdx, startTime: dropTime, trimStart: 0, trimEnd: defaultTrimEnd(clip), ...defTransform(clip.type) })
+        addTimelineItem({ id: nanoid(), clipId: clip.id, trackIndex: trackIdx, startTime: dropTime, trimStart: 0, trimEnd: defaultTrimEnd(clip), ...defTransform(clip.type), ...defKenBurns(clip.type) })
       return
     }
 
@@ -371,7 +375,7 @@ export default function Timeline() {
     for (const clip of imported) {
       if (!clipFitsTrack(clip.type, trackIdx)) continue
       const trimEnd = defaultTrimEnd(clip)
-      addTimelineItem({ id: nanoid(), clipId: clip.id, trackIndex: trackIdx, startTime: dropTime, trimStart: 0, trimEnd, ...defTransform(clip.type) })
+      addTimelineItem({ id: nanoid(), clipId: clip.id, trackIndex: trackIdx, startTime: dropTime, trimStart: 0, trimEnd, ...defTransform(clip.type), ...defKenBurns(clip.type) })
       dropTime += trimEnd
     }
   }
