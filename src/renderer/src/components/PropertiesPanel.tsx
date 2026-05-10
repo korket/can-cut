@@ -655,7 +655,11 @@ function KenBurnsSection({ kenBurns, update, clipDurationMs = 0, flat }: {
         <>
           <div style={{ gridColumn: 'span 2', display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 4 }}>
             {KB_PRESETS.map(p => (
-              <button key={p.label} style={styles.kbPresetBtn} onClick={() => update(p.kb)}>{p.label}</button>
+              <button key={p.label} style={styles.kbPresetBtn} onClick={() => {
+                const delta = clipDurationMs / 100000  // duration_s * 0.01
+                const dir = Math.sign(p.kb.endScale - p.kb.startScale) || 1
+                update({ ...p.kb, endScale: p.kb.startScale + dir * delta })
+              }}>{p.label}</button>
             ))}
           </div>
 
