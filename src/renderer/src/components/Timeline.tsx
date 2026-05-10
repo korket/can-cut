@@ -358,7 +358,7 @@ export default function Timeline() {
     }
 
     function defaultTrimEnd(clip: { type: string; duration: number }) {
-      return clip.type === 'image' ? Math.min(5000, clip.duration) : clip.duration
+      return clip.type === 'image' || clip.type === 'solid' ? Math.min(5000, clip.duration) : clip.duration
     }
 
     const clipId = e.dataTransfer.getData('text/x-clip-id')
@@ -704,8 +704,8 @@ function TrackRow({ trackIdx, trackHeight, clips, timelineItems, msToPx, dragOve
       {timelineItems.filter(i => i.trackIndex === trackIdx).map(item => {
         const clip = clips.find(c => c.id === item.clipId)
         if (!clip) return null
-        const bg = clip.type === 'audio' ? '#152b3d' : clip.type === 'image' ? '#2d1f0e' : '#0f2d1a'
-        const border = clip.type === 'audio' ? '#2a7abf' : clip.type === 'image' ? '#bf8a2a' : '#2abf5a'
+        const bg = clip.type === 'audio' ? '#152b3d' : clip.type === 'image' ? '#2d1f0e' : clip.type === 'solid' ? '#1a1a2e' : '#0f2d1a'
+        const border = clip.type === 'audio' ? '#2a7abf' : clip.type === 'image' ? '#bf8a2a' : clip.type === 'solid' ? '#5555aa' : '#2abf5a'
         const isSelected = selectedId === item.id
 
         // Detect adjacent previous clip for transition chip (video/image only)

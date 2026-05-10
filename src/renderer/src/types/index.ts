@@ -6,9 +6,10 @@ export interface MediaClip {
   width: number
   height: number
   fps: number
-  type: 'video' | 'audio' | 'image'
+  type: 'video' | 'audio' | 'image' | 'solid'
   thumbnail?: string
   folderId?: string | null
+  color?: string   // solid color clips only
 }
 
 export interface MediaFolder {

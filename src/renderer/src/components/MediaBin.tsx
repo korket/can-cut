@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState } from 'react'
 import { useEditorStore } from '../store/useEditorStore'
 import type { MediaClip, MediaFolder, TimelineItem } from '../types'
 import { nanoid } from '../utils/nanoid'
@@ -19,6 +19,7 @@ export default function MediaBin() {
 
   const [draggingOver, setDraggingOver]       = useState(false)
   const [importing, setImporting]             = useState(false)
+  const [solidColor, setSolidColor]           = useState('#000000')
   const [expanded, setExpanded]               = useState<Set<string>>(() => new Set(folders.map(f => f.id)))
   const [editingId, setEditingId]             = useState<string | null>(null)
   const [editingName, setEditingName]         = useState('')
@@ -60,6 +61,14 @@ export default function MediaBin() {
       startTime, trimStart: 0, trimEnd: clip.duration,
     }
     addTimelineItem(item)
+  }
+
+  function addSolidColor() {
+    addClip({
+      id: nanoid(), name: `Solid ${solidColor.toUpperCase()}`,
+      path: '', duration: 3_600_000, width: 1920, height: 1080,
+      fps: 30, type: 'solid', color: solidColor,
+    })
   }
 
   function createFolder() {
@@ -118,6 +127,14 @@ export default function MediaBin() {
           <button style={styles.headerBtn} onClick={createFolder}>+ Folder</button>
           <button style={styles.headerBtn} onClick={handleImport}>+ Import</button>
         </div>
+      </div>
+
+      {/* Solid color row */}
+      <div style={styles.solidRow}>
+        <input type="color" value={solidColor} onChange={e => setSolidColor(e.target.value)}
+          style={styles.solidSwatch} title="Pick solid color" />
+        <span style={styles.solidLabel}>{solidColor.toUpperCase()}</span>
+        <button style={styles.solidBtn} onClick={addSolidColor}>+ Solid Color</button>
       </div>
 
       {/* Scrollable content */}
@@ -219,11 +236,13 @@ function ClipCard({ clip, onAdd, onRemove }: { clip: MediaClip; onAdd: () => voi
       }}
     >
       <div style={styles.thumb} onDoubleClick={onAdd} title="Double-click to add to timeline">
-        {clip.thumbnail
-          ? <img src={clip.thumbnail} style={styles.thumbImg} />
-          : <div style={styles.thumbPlaceholder}>{clip.type === 'audio' ? '♫' : '▶'}</div>
+        {clip.type === 'solid'
+          ? <div style={{ width: '100%', height: '100%', background: clip.color ?? '#000' }} />
+          : clip.thumbnail
+            ? <img src={clip.thumbnail} style={styles.thumbImg} />
+            : <div style={styles.thumbPlaceholder}>{clip.type === 'audio' ? '♫' : '▶'}</div>
         }
-        <div style={styles.duration}>{formatDuration(clip.duration)}</div>
+        {clip.type !== 'solid' && <div style={styles.duration}>{formatDuration(clip.duration)}</div>}
       </div>
       <div style={styles.clipInfo}>
         <div style={styles.clipName} title={clip.name}>{clip.name}</div>
@@ -242,6 +261,11 @@ const styles: Record<string, React.CSSProperties> = {
   title:           { fontSize: 15, fontWeight: 600, color: '#ccc' },
   headerBtns:      { display: 'flex', gap: 8 },
   headerBtn:       { background: '#2a2a2a', border: 'none', color: '#ddd', padding: '5px 12px', borderRadius: 5, cursor: 'pointer', fontSize: 13 },
+
+  solidRow:   { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 14px', borderBottom: '1px solid #2a2a2a', flexShrink: 0 },
+  solidSwatch:{ width: 26, height: 26, padding: 0, border: '1px solid #444', borderRadius: 4, cursor: 'pointer', background: 'none' },
+  solidLabel: { fontSize: 12, color: '#666', fontFamily: 'monospace', flex: 1 },
+  solidBtn:   { background: '#2a2a2a', border: 'none', color: '#ddd', padding: '4px 10px', borderRadius: 5, cursor: 'pointer', fontSize: 12 },
 
   content:         { flex: 1, overflowY: 'auto', padding: 10, position: 'relative', transition: 'background 0.15s' },
   contentDragging: { background: 'rgba(42,191,90,0.06)', outline: '2px dashed #2abf5a', outlineOffset: -4 },

@@ -404,7 +404,9 @@ export default function PreviewPlayer() {
                       <div style={{ position: 'absolute', inset: 0, ...outStyle }}>
                         {outClip.type === 'video'
                           ? <video ref={getVidRef(`${outItem.id}_out`)} style={{ ...styles.media, ...outItemStyle }} playsInline />
-                          : <img src={`file://${outClip.path}`} style={{ ...styles.media, ...outItemStyle }} alt="" />
+                          : outClip.type === 'solid'
+                            ? <div style={{ ...styles.media, ...outItemStyle, background: outClip.color ?? '#000' }} />
+                            : <img src={`file://${outClip.path}`} style={{ ...styles.media, ...outItemStyle }} alt="" />
                         }
                       </div>
                     )}
@@ -413,7 +415,9 @@ export default function PreviewPlayer() {
                     <div style={{ ...styles.animWrapper, ...animStyle, ...inStyle }}>
                       {clip.type === 'video'
                         ? <video ref={getVidRef(item.id)} style={{ ...styles.media, ...itemStyle }} playsInline />
-                        : <img src={`file://${clip.path}`} style={{ ...styles.media, ...itemStyle }} alt="" />
+                        : clip.type === 'solid'
+                          ? <div style={{ ...styles.media, ...itemStyle, background: clip.color ?? '#000' }} />
+                          : <img src={`file://${clip.path}`} style={{ ...styles.media, ...itemStyle }} alt="" />
                       }
                     </div>
 
