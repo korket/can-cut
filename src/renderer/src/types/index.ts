@@ -118,9 +118,9 @@ export interface KenBurns {
 }
 
 export const DEFAULT_KEN_BURNS: KenBurns = {
-  startScale: 1.0, endScale: 1.15,
-  startX: -3, startY: -3,
-  endX:    3, endY:    3,
+  startScale: 1.0, endScale: 1.0,
+  startX: 0, startY: 0,
+  endX:   0, endY:   0,
   focalX: 50, focalY: 50,
 }
 
