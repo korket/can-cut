@@ -54,17 +54,27 @@ export interface Effects {
   opacity:    number   // 0–100,  100 = normal
   grayscale:  number   // 0–100,  0 = normal
   sepia:      number   // 0–100,  0 = normal
+  shadowOpacity: number  // 0–100,  0 = no shadow
+  shadowX:       number  // px, -50–50
+  shadowY:       number  // px, -50–50
+  shadowBlur:    number  // px, 0–50
+  shadowColor:   string  // hex
+  backdropBlur:     number  // 0 = off, 1–30 px — blurs all layers rendered below this one
+  backdropBlurFade: number  // fade-in/out duration in ms (0 = instant)
 }
 
 export const DEFAULT_EFFECTS: Effects = {
   brightness: 100, contrast: 100, saturate: 100,
   hue: 0, blur: 0, opacity: 100, grayscale: 0, sepia: 0,
+  shadowOpacity: 0, shadowX: 4, shadowY: 4, shadowBlur: 8, shadowColor: '#000000',
+  backdropBlur: 0, backdropBlurFade: 600,
 }
 
 export type AnimEffect =
   | 'none' | 'fade'
   | 'zoom-in' | 'zoom-out'
   | 'slide-left' | 'slide-right' | 'slide-up' | 'slide-down'
+  | 'blur-in' | 'blur-out'
 
 export interface Animation {
   inEffect:   AnimEffect

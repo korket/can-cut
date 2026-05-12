@@ -508,6 +508,16 @@ function CropSection({ transform: t, update, flat }: { transform: Transform; upd
   )
 }
 
+// ── Shadow presets ────────────────────────────────────────────────────────────
+const SHADOW_PRESETS: Array<{ label: string; values?: { shadowOpacity: number; shadowBlur: number; shadowX: number; shadowY: number } }> = [
+  { label: 'None' },
+  { label: 'Soft',  values: { shadowOpacity: 55, shadowBlur: 16, shadowX: 0,  shadowY: 6  } },
+  { label: 'Drop',  values: { shadowOpacity: 70, shadowBlur: 8,  shadowX: 4,  shadowY: 4  } },
+  { label: 'Hard',  values: { shadowOpacity: 85, shadowBlur: 0,  shadowX: 4,  shadowY: 4  } },
+  { label: 'Glow',  values: { shadowOpacity: 80, shadowBlur: 20, shadowX: 0,  shadowY: 0  } },
+  { label: 'Deep',  values: { shadowOpacity: 75, shadowBlur: 18, shadowX: 8,  shadowY: 14 } },
+]
+
 // ── Effects Section ───────────────────────────────────────────────────────────
 interface EffectsSectionProps {
   effects: Effects; effective: Effects
@@ -520,7 +530,8 @@ function EffectsSection({ effects: base, effective: e, update, clipTime, kfTrack
   const [open, setOpen] = useState(false)
   const hasEffect = base.brightness !== 100 || base.contrast !== 100 || base.saturate !== 100 ||
                     base.hue !== 0 || base.blur !== 0 || base.opacity !== 100 ||
-                    base.grayscale !== 0 || base.sepia !== 0 || kfTracks.some(t =>
+                    base.grayscale !== 0 || base.sepia !== 0 || base.shadowOpacity > 0 || base.backdropBlur > 0 ||
+                    kfTracks.some(t =>
                       ['brightness','contrast','saturate','hue','blur','opacity','grayscale','sepia'].includes(t.property))
 
   function kf(prop: string, val: number) {
@@ -542,6 +553,49 @@ function EffectsSection({ effects: base, effective: e, update, clipTime, kfTrack
       <TRow label="Opacity"    min={0}    max={100} step={1}   value={e.opacity}    unit="%"  onChange={v => ch('opacity',    v)} onReset={() => update({ opacity: 100 })}    kf={kf('opacity',    e.opacity)}    />
       <TRow label="Grayscale"  min={0}    max={100} step={1}   value={e.grayscale}  unit="%"  onChange={v => ch('grayscale',  v)} onReset={() => update({ grayscale: 0 })}    kf={kf('grayscale',  e.grayscale)}  />
       <TRow label="Sepia"      min={0}    max={100} step={1}   value={e.sepia}      unit="%"  onChange={v => ch('sepia',      v)} onReset={() => update({ sepia: 0 })}        kf={kf('sepia',      e.sepia)}      />
+
+      {/* Backdrop Blur */}
+      <div style={{ gridColumn: 'span 2', borderTop: '1px solid #242424', marginTop: 4, paddingTop: 10 }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: base.backdropBlur > 0 ? '#e6a030' : '#666', letterSpacing: 0.8, display: 'block', marginBottom: 6 }}>BACKDROP BLUR</span>
+        <TRow label="Amount" min={0} max={30} step={0.5} value={e.backdropBlur} unit="px" onChange={v => update({ backdropBlur: v })} onReset={() => update({ backdropBlur: 0 })} kf={{ active: false, toggle: () => {} }} />
+        {base.backdropBlur > 0 && (
+          <TRow label="Fade" min={0} max={3000} step={50} value={e.backdropBlurFade} unit="ms" onChange={v => update({ backdropBlurFade: v })} onReset={() => update({ backdropBlurFade: 600 })} kf={{ active: false, toggle: () => {} }} />
+        )}
+      </div>
+
+      {/* Shadow */}
+      <div style={{ gridColumn: 'span 2', borderTop: '1px solid #242424', marginTop: 4, paddingTop: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: base.shadowOpacity > 0 ? '#e6a030' : '#666', letterSpacing: 0.8 }}>SHADOW</span>
+          {base.shadowOpacity > 0 && (
+            <input
+              type="color"
+              value={base.shadowColor ?? '#000000'}
+              onChange={e => update({ shadowColor: e.target.value })}
+              style={{ width: 26, height: 20, padding: 0, border: '1px solid #444', borderRadius: 3, cursor: 'pointer', background: 'none' }}
+              title="Shadow color"
+            />
+          )}
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 10 }}>
+          {SHADOW_PRESETS.map(p => (
+            <button
+              key={p.label}
+              style={{ ...styles.kbPresetBtn, ...(p.label === 'None' && base.shadowOpacity === 0 ? styles.kbPresetBtnActive : {}) }}
+              onClick={() => update(p.label === 'None' ? { shadowOpacity: 0 } : { ...p.values, shadowColor: base.shadowColor ?? '#000000' })}
+            >{p.label}</button>
+          ))}
+        </div>
+        {base.shadowOpacity > 0 && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 14px' }}>
+            <TRow label="Opacity" min={0} max={100} step={1}   value={base.shadowOpacity} unit="%" onChange={v => update({ shadowOpacity: v })} onReset={() => update({ shadowOpacity: 0 })} />
+            <TRow label="Blur"    min={0} max={50}  step={0.5} value={base.shadowBlur}    unit="px" onChange={v => update({ shadowBlur: v })}    onReset={() => update({ shadowBlur: 8 })}    />
+            <TRow label="X"       min={-50} max={50} step={0.5} value={base.shadowX}      unit="px" onChange={v => update({ shadowX: v })}       onReset={() => update({ shadowX: 4 })}       speed={0.5} />
+            <TRow label="Y"       min={-50} max={50} step={0.5} value={base.shadowY}      unit="px" onChange={v => update({ shadowY: v })}       onReset={() => update({ shadowY: 4 })}       speed={0.5} />
+          </div>
+        )}
+      </div>
+
       {flat && hasEffect && (
         <button style={{ gridColumn: 'span 2', ...styles.resetAllBtnFull }} onClick={() => update({ ...DEFAULT_EFFECTS })}>Reset All</button>
       )}
@@ -841,6 +895,7 @@ function TRow({ label, min, max, step, value, unit, onChange, onReset, kf, speed
 const IN_EFFECTS:  { value: AnimEffect; label: string }[] = [
   { value: 'none',        label: 'None'             },
   { value: 'fade',        label: 'Fade In'          },
+  { value: 'blur-in',     label: 'Blur In'          },
   { value: 'zoom-in',     label: 'Zoom In'          },
   { value: 'zoom-out',    label: 'Zoom Out'         },
   { value: 'slide-left',  label: 'Slide from Left'  },
@@ -851,6 +906,7 @@ const IN_EFFECTS:  { value: AnimEffect; label: string }[] = [
 const OUT_EFFECTS: { value: AnimEffect; label: string }[] = [
   { value: 'none',        label: 'None'           },
   { value: 'fade',        label: 'Fade Out'       },
+  { value: 'blur-out',    label: 'Blur Out'       },
   { value: 'zoom-in',     label: 'Zoom In'        },
   { value: 'zoom-out',    label: 'Zoom Out'       },
   { value: 'slide-left',  label: 'Slide to Left'  },

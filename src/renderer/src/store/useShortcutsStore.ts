@@ -23,8 +23,9 @@ export const DEFAULT_SHORTCUTS: Shortcut[] = [
   { id: 'zoom_in',        label: 'Timeline Zoom In',     key: '=',          ctrl: false, shift: false, alt: false },
   { id: 'zoom_out',       label: 'Timeline Zoom Out',    key: '-',          ctrl: false, shift: false, alt: false },
   { id: 'export',         label: 'Export',               key: 'e',          ctrl: true,  shift: false, alt: false },
-  { id: 'scroll_timeline', label: 'Pan Timeline',         key: 'Scroll',     ctrl: true,  shift: false, alt: false, type: 'scroll' },
-  { id: 'zoom_scroll',     label: 'Zoom Timeline',        key: 'Scroll',     ctrl: false, shift: false, alt: true,  type: 'scroll' },
+  { id: 'scroll_timeline',    label: 'Pan Timeline',         key: 'Scroll',     ctrl: true,  shift: false, alt: false, type: 'scroll' },
+  { id: 'zoom_scroll',        label: 'Zoom Timeline',        key: 'Scroll',     ctrl: false, shift: false, alt: true,  type: 'scroll' },
+  { id: 'fullscreen_preview', label: 'Fullscreen Preview',   key: 'f',          ctrl: true,  shift: false, alt: false },
 ]
 
 const STORAGE_KEY = 'can-cut-shortcuts'

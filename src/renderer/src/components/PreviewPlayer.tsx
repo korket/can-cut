@@ -1,30 +1,54 @@
 import { useEffect, useRef, useState } from 'react'
 import { useEditorStore } from '../store/useEditorStore'
+import { useShortcutsStore, matchesShortcut } from '../store/useShortcutsStore'
 import type { TextOverlay, TimelineItem, MediaClip, Transform, Effects, Animation, Transition, KenBurns } from '../types'
 import { DEFAULT_TRANSFORM, DEFAULT_EFFECTS, DEFAULT_ANIMATION } from '../types'
 import { formatTimecode, snapToFrame, frameDurationMs } from '../utils/frame'
 import { applyKeyframesToTransform, applyKeyframesToEffects } from '../utils/keyframes'
 
-function buildTransformStyle(t: Transform, e: Effects): React.CSSProperties {
+function hexToRgb(hex: string) {
+  const h = hex.replace('#', '')
+  const r = parseInt(h.slice(0, 2), 16)
+  const g = parseInt(h.slice(2, 4), 16)
+  const b = parseInt(h.slice(4, 6), 16)
+  return `${r},${g},${b}`
+}
+
+type LayerStyle = { outer: React.CSSProperties; inner: React.CSSProperties }
+
+function buildTransformStyle(t: Transform, e: Effects): LayerStyle {
   const sx = t.scaleX * (t.flipH ? -1 : 1)
   const sy = t.scaleY * (t.flipV ? -1 : 1)
-  const filterParts = [
-    e.brightness !== 100  ? `brightness(${e.brightness / 100})` : '',
-    e.contrast   !== 100  ? `contrast(${e.contrast / 100})`     : '',
-    e.saturate   !== 100  ? `saturate(${e.saturate / 100})`     : '',
-    e.hue        !== 0    ? `hue-rotate(${e.hue}deg)`           : '',
-    e.blur       !== 0    ? `blur(${e.blur}px)`                 : '',
-    e.opacity    !== 100  ? `opacity(${e.opacity / 100})`       : '',
-    e.grayscale  !== 0    ? `grayscale(${e.grayscale / 100})`   : '',
-    e.sepia      !== 0    ? `sepia(${e.sepia / 100})`           : '',
-  ].filter(Boolean)
+
+  // Non-shadow filters go on the media element (inside clip-path)
+  const innerFilter = [
+    e.brightness !== 100 ? `brightness(${e.brightness / 100})` : '',
+    e.contrast   !== 100 ? `contrast(${e.contrast / 100})`     : '',
+    e.saturate   !== 100 ? `saturate(${e.saturate / 100})`     : '',
+    e.hue        !== 0   ? `hue-rotate(${e.hue}deg)`           : '',
+    e.blur       !== 0   ? `blur(${e.blur}px)`                 : '',
+    e.opacity    !== 100 ? `opacity(${e.opacity / 100})`       : '',
+    e.grayscale  !== 0   ? `grayscale(${e.grayscale / 100})`   : '',
+    e.sepia      !== 0   ? `sepia(${e.sepia / 100})`           : '',
+  ].filter(Boolean).join(' ') || undefined
+
+  // drop-shadow goes on the outer wrapper so it renders outside the clip-path
+  const outerFilter = e.shadowOpacity > 0
+    ? `drop-shadow(${e.shadowX}px ${e.shadowY}px ${e.shadowBlur}px rgba(${hexToRgb(e.shadowColor ?? '#000000')},${e.shadowOpacity / 100}))`
+    : undefined
+
   return {
-    transform: `translate(${t.posX}%, ${t.posY}%) rotate(${t.rotation}deg) rotateX(${t.pitch}deg) rotateY(${t.yaw}deg) scale(${sx}, ${sy})`,
-    transformOrigin: `${t.anchorX * 100}% ${t.anchorY * 100}%`,
-    clipPath: (t.cropL || t.cropR || t.cropT || t.cropB)
-      ? `inset(${t.cropT}% ${t.cropR}% ${t.cropB}% ${t.cropL}%)`
-      : undefined,
-    filter: filterParts.length ? filterParts.join(' ') : undefined,
+    outer: {
+      transform: `translate(${t.posX}%, ${t.posY}%) rotate(${t.rotation}deg) rotateX(${t.pitch}deg) rotateY(${t.yaw}deg) scale(${sx}, ${sy})`,
+      transformOrigin: `${t.anchorX * 100}% ${t.anchorY * 100}%`,
+      filter: outerFilter,
+    },
+    inner: {
+      clipPath: (t.cropL || t.cropR || t.cropT || t.cropB)
+        ? `inset(${t.cropT}% ${t.cropR}% ${t.cropB}% ${t.cropL}%)`
+        : undefined,
+      filter: innerFilter,
+    },
   }
 }
 
@@ -38,6 +62,7 @@ function buildAnimationStyle(anim: Animation, clipTime: number, clipDuration: nu
 
   const parts: string[] = []
   let opacity = 1
+  let blurPx = 0
 
   switch (anim.inEffect) {
     case 'fade':        opacity *= inP; break
@@ -47,6 +72,7 @@ function buildAnimationStyle(anim: Animation, clipTime: number, clipDuration: nu
     case 'slide-right': parts.push(`translateX(${(1 - inP) * 100}%)`); break
     case 'slide-up':    parts.push(`translateY(${(inP - 1) * 100}%)`); break
     case 'slide-down':  parts.push(`translateY(${(1 - inP) * 100}%)`); break
+    case 'blur-in':     blurPx += 20 * (1 - inP); break
   }
   switch (anim.outEffect) {
     case 'fade':        opacity *= outP; break
@@ -56,9 +82,14 @@ function buildAnimationStyle(anim: Animation, clipTime: number, clipDuration: nu
     case 'slide-right': if (outP < 1) parts.push(`translateX(${(1 - outP) * 100}%)`); break
     case 'slide-up':    if (outP < 1) parts.push(`translateY(${(outP - 1) * 100}%)`); break
     case 'slide-down':  if (outP < 1) parts.push(`translateY(${(1 - outP) * 100}%)`); break
+    case 'blur-out':    if (outP < 1) blurPx += 20 * (1 - outP); break
   }
 
-  return { transform: parts.length ? parts.join(' ') : undefined, opacity }
+  return {
+    transform: parts.length ? parts.join(' ') : undefined,
+    opacity,
+    filter: blurPx > 0 ? `blur(${blurPx.toFixed(1)}px)` : undefined,
+  }
 }
 
 function applyKenBurns(kb: KenBurns | undefined, clipTime: number, clipDuration: number, t: Transform): Transform {
@@ -125,11 +156,13 @@ type VideoLayer = {
   outItem: TimelineItem | null; outClip: MediaClip | null
 }
 
+
 export default function PreviewPlayer() {
   const {
     clips, timelineItems, textOverlays,
     currentTime, setCurrentTime, isPlaying, setIsPlaying,
     getTimelineDuration, fps, selectedId, updateTransform, updateTimelineItem,
+    hoverPreviewClip,
   } = useEditorStore()
 
   // Pool: keyed by item.id for active clips, "${item.id}_out" for frozen outgoing clips
@@ -155,7 +188,32 @@ export default function PreviewPlayer() {
 
   const [transformMode, setTransformMode] = useState(false)
   const [focalMode, setFocalMode] = useState(false)
-  const viewportRef = useRef<HTMLDivElement>(null)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const [fsControlsVisible, setFsControlsVisible] = useState(true)
+  const [vpWrapSize, setVpWrapSize] = useState({ w: 0, h: 0 })
+  const viewportRef     = useRef<HTMLDivElement>(null)
+  const viewportWrapRef = useRef<HTMLDivElement>(null)
+  const containerRef    = useRef<HTMLDivElement>(null)
+  const hideTimerRef    = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const CONTROLS_H = 52
+
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const obs = new ResizeObserver(() => {
+      const { width, height } = el.getBoundingClientRect()
+      const availH  = height - CONTROLS_H
+      const naturalH = width * 9 / 16
+      if (naturalH <= availH) {
+        setVpWrapSize({ w: width, h: naturalH })
+      } else {
+        setVpWrapSize({ w: availH * 16 / 9, h: availH })
+      }
+    })
+    obs.observe(el)
+    return () => obs.disconnect()
+  }, [])
 
   const selectedItem = selectedId ? timelineItems.find(i => i.id === selectedId) ?? null : null
   const selectedClip = selectedItem ? clips.find(c => c.id === selectedItem.clipId) ?? null : null
@@ -163,6 +221,26 @@ export default function PreviewPlayer() {
 
   // Exit focal mode automatically when selection changes or KB is removed
   useEffect(() => { if (!selectedHasKB) setFocalMode(false) }, [selectedHasKB])
+
+  // Track fullscreen state
+  useEffect(() => {
+    function onFsChange() {
+      const fs = !!document.fullscreenElement
+      setIsFullscreen(fs)
+      setFsControlsVisible(true)
+      if (hideTimerRef.current) clearTimeout(hideTimerRef.current)
+      if (fs) hideTimerRef.current = setTimeout(() => setFsControlsVisible(false), 3000)
+    }
+    document.addEventListener('fullscreenchange', onFsChange)
+    return () => document.removeEventListener('fullscreenchange', onFsChange)
+  }, [])
+
+  function onFsMouseMove() {
+    if (!isFullscreen) return
+    setFsControlsVisible(true)
+    if (hideTimerRef.current) clearTimeout(hideTimerRef.current)
+    hideTimerRef.current = setTimeout(() => setFsControlsVisible(false), 3000)
+  }
 
   function handleFocalPointer(e: React.MouseEvent<HTMLDivElement>) {
     if (!viewportRef.current || !selectedItem?.kenBurns) return
@@ -349,6 +427,22 @@ export default function PreviewPlayer() {
     return () => cancelAnimationFrame(rafRef.current)
   }, [isPlaying])
 
+  // ── Fullscreen shortcut ───────────────────────────────────────────────────
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      const { shortcuts } = useShortcutsStore.getState()
+      const sc = shortcuts.find(s => s.id === 'fullscreen_preview')
+      if (!sc || !matchesShortcut(e, sc)) return
+      e.preventDefault()
+      const wrap = viewportWrapRef.current
+      if (!wrap) return
+      if (document.fullscreenElement) document.exitFullscreen()
+      else wrap.requestFullscreen()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
+
   function togglePlay() {
     if (timelineItems.length === 0) return
     setIsPlaying(!isPlaying)
@@ -362,9 +456,20 @@ export default function PreviewPlayer() {
   const activeTextOverlays = textOverlays.filter(o => currentTime >= o.startTime && currentTime <= o.endTime)
 
   return (
-    <div style={styles.container}>
-      <div style={styles.viewportWrap}>
-        <div style={styles.viewport} ref={viewportRef}>
+    <div style={styles.container} ref={containerRef}>
+      <div
+        style={{
+          ...styles.viewportWrap,
+          ...(isFullscreen
+            ? { flex: 1 }
+            : vpWrapSize.w > 0 ? { width: vpWrapSize.w, height: vpWrapSize.h } : { flex: 1 }
+          ),
+          cursor: isFullscreen && !fsControlsVisible ? 'none' : 'default',
+        }}
+        ref={viewportWrapRef}
+        onMouseMove={onFsMouseMove}
+      >
+        <div style={{ ...styles.viewport, ...(isFullscreen ? { aspectRatio: '16/9', height: '100%', width: 'auto', maxWidth: '100%' } : {}) }} ref={viewportRef}>
           {timelineItems.length === 0 ? (
             <div style={styles.empty}>Drop clips to the timeline to preview</div>
           ) : (
@@ -382,8 +487,8 @@ export default function PreviewPlayer() {
                 const itemStyle  = buildTransformStyle(kbT, kfE)
                 const animStyle  = buildAnimationStyle({ ...DEFAULT_ANIMATION, ...item.animation }, clipTime, clipDur)
 
-                const outItemStyle = (() => {
-                  if (!outItem || !transState) return {}
+                const outItemStyle: LayerStyle = (() => {
+                  if (!outItem || !transState) return { outer: {}, inner: {} }
                   const outBase = { ...DEFAULT_TRANSFORM, ...outItem.transform }
                   const outEff  = { ...DEFAULT_EFFECTS,   ...outItem.effects   }
                   const outDur  = outItem.trimEnd - outItem.trimStart
@@ -397,28 +502,49 @@ export default function PreviewPlayer() {
                   ? transitionStyles(transState.transition, transState.progress)
                   : { outStyle: {}, inStyle: {}, overlayOpacity: 0 }
 
+                const backdropBlur     = kfE.backdropBlur     ?? 0
+                const backdropBlurFade = kfE.backdropBlurFade ?? 600
+                const bgOpacity        = backdropBlur > 0 && backdropBlurFade > 0
+                  ? Math.min(clipTime / backdropBlurFade, (clipDur - clipTime) / backdropBlurFade, 1)
+                  : backdropBlur > 0 ? 1 : 0
+
                 return (
                   <div key={item.id} style={{ position: 'absolute', inset: 0 }}>
+                    {/* Backdrop blur — blurs everything painted behind this layer */}
+                    {backdropBlur > 0 && (
+                      <div style={{
+                        position: 'absolute', inset: 0, zIndex: 0,
+                        backdropFilter: `blur(${backdropBlur}px)`,
+                        WebkitBackdropFilter: `blur(${backdropBlur}px)`,
+                        opacity: bgOpacity,
+                        pointerEvents: 'none',
+                      }} />
+                    )}
+
                     {/* Outgoing (frozen) clip */}
                     {transState && outItem && outClip && (
                       <div style={{ position: 'absolute', inset: 0, ...outStyle }}>
-                        {outClip.type === 'video'
-                          ? <video ref={getVidRef(`${outItem.id}_out`)} style={{ ...styles.media, ...outItemStyle }} playsInline />
-                          : outClip.type === 'solid'
-                            ? <div style={{ ...styles.media, ...outItemStyle, background: outClip.color ?? '#000' }} />
-                            : <img src={`file://${outClip.path}`} style={{ ...styles.media, ...outItemStyle }} alt="" />
-                        }
+                        <div style={{ position: 'absolute', inset: 0, ...outItemStyle.outer }}>
+                          {outClip.type === 'video'
+                            ? <video ref={getVidRef(`${outItem.id}_out`)} style={{ ...styles.media, ...outItemStyle.inner }} playsInline />
+                            : outClip.type === 'solid'
+                              ? <div style={{ ...styles.media, ...outItemStyle.inner, background: outClip.color ?? '#000' }} />
+                              : <img src={`file://${outClip.path}`} style={{ ...styles.media, ...outItemStyle.inner }} alt="" />
+                          }
+                        </div>
                       </div>
                     )}
 
                     {/* Incoming / current clip */}
                     <div style={{ ...styles.animWrapper, ...animStyle, ...inStyle }}>
-                      {clip.type === 'video'
-                        ? <video ref={getVidRef(item.id)} style={{ ...styles.media, ...itemStyle }} playsInline />
-                        : clip.type === 'solid'
-                          ? <div style={{ ...styles.media, ...itemStyle, background: clip.color ?? '#000' }} />
-                          : <img src={`file://${clip.path}`} style={{ ...styles.media, ...itemStyle }} alt="" />
-                      }
+                      <div style={{ position: 'absolute', inset: 0, ...itemStyle.outer }}>
+                        {clip.type === 'video'
+                          ? <video ref={getVidRef(item.id)} style={{ ...styles.media, ...itemStyle.inner }} playsInline />
+                          : clip.type === 'solid'
+                            ? <div style={{ ...styles.media, ...itemStyle.inner, background: clip.color ?? '#000' }} />
+                            : <img src={`file://${clip.path}`} style={{ ...styles.media, ...itemStyle.inner }} alt="" />
+                        }
+                      </div>
                     </div>
 
                     {/* Fade-to-color overlay */}
@@ -461,7 +587,67 @@ export default function PreviewPlayer() {
               })()}
             </>
           )}
+
+          {/* Hover preview from media bin */}
+          {hoverPreviewClip && (
+            <div style={{ position: 'absolute', inset: 0, zIndex: 50, background: '#000' }}>
+              {hoverPreviewClip.type === 'video' && (
+                <video
+                  key={hoverPreviewClip.id}
+                  src={`file://${hoverPreviewClip.path}`}
+                  autoPlay muted loop
+                  style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                />
+              )}
+              {hoverPreviewClip.type === 'image' && (
+                <img
+                  src={hoverPreviewClip.thumbnail ?? `file://${hoverPreviewClip.path}`}
+                  alt=""
+                  style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                />
+              )}
+              {hoverPreviewClip.type === 'solid' && (
+                <div style={{ width: '100%', height: '100%', background: hoverPreviewClip.color ?? '#000' }} />
+              )}
+              {hoverPreviewClip.type === 'audio' && (
+                <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 40, color: '#444' }}>♫</span>
+                  <span style={{ fontSize: 12, color: '#555', maxWidth: '80%', textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{hoverPreviewClip.name}</span>
+                </div>
+              )}
+            </div>
+          )}
         </div>
+
+        {/* Fullscreen overlay controls */}
+        {isFullscreen && (
+          <div style={{ ...styles.fsControls, opacity: fsControlsVisible ? 1 : 0 }}>
+            <div style={styles.fsSeekRow}>
+              <span style={styles.fsTime}>{formatTimecode(currentTime, fps)}</span>
+              <input
+                type="range" min={0} max={duration || 1} step={frameDurationMs(fps)} value={currentTime}
+                onChange={handleSeek} style={styles.fsSeekBar}
+              />
+              <span style={styles.fsTime}>{formatTimecode(duration, fps)}</span>
+            </div>
+            <div style={styles.fsBtnRow}>
+              <button style={styles.fsBtn} onClick={togglePlay} title={isPlaying ? 'Pause' : 'Play'}>
+                {isPlaying ? '⏸' : '▶'}
+              </button>
+              <button
+                style={styles.fsBtn}
+                onClick={() => { setIsPlaying(false); setCurrentTime(0) }}
+                title="Stop"
+              >⏹</button>
+              <div style={{ flex: 1 }} />
+              <button
+                style={styles.fsBtn}
+                onClick={() => document.exitFullscreen()}
+                title="Exit fullscreen (Esc)"
+              >⛶</button>
+            </div>
+          </div>
+        )}
       </div>
 
       <div style={styles.controls}>
@@ -618,16 +804,23 @@ function TextOverlayEl({ overlay }: { overlay: TextOverlay }) {
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  container:    { display: 'flex', flexDirection: 'column', height: '100%', background: '#111' },
-  viewportWrap: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', padding: 12 },
-  viewport:     { position: 'relative', background: '#000', aspectRatio: '16/9', maxHeight: '100%', maxWidth: '100%', width: '100%', perspective: '800px', overflow: 'hidden' },
+  container:    { display: 'flex', flexDirection: 'column', height: '100%', background: '#111', alignItems: 'center' },
+  viewportWrap: { display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', background: '#1a1a1a', position: 'relative', flexShrink: 0 },
+  viewport:     { position: 'relative', background: '#000', width: '100%', height: '100%', perspective: '800px', overflow: 'hidden' },
   animWrapper:  { position: 'absolute', inset: 0 },
   media:        { width: '100%', height: '100%', objectFit: 'contain', display: 'block' },
   empty:        { position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#444', fontSize: 14 },
-  controls:     { height: 52, display: 'flex', alignItems: 'center', gap: 10, padding: '0 14px', borderTop: '1px solid #2a2a2a', flexShrink: 0 },
+  controls:     { height: 52, width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '0 14px', borderTop: '1px solid #2a2a2a', flexShrink: 0 },
   playBtn:      { background: 'none', border: 'none', color: '#fff', fontSize: 22, cursor: 'pointer', width: 32 },
   time:         { fontSize: 13, color: '#888', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' },
   seekBar:           { flex: 1, accentColor: '#e63950', cursor: 'pointer', height: 20 },
   transformToggle:   { background: 'none', border: '1px solid #333', color: '#555', fontSize: 18, width: 30, height: 30, borderRadius: 5, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   transformToggleOn: { borderColor: '#e63950', color: '#e63950', background: 'rgba(230,57,80,0.1)' },
+
+  fsControls: { position: 'absolute', bottom: 0, left: 0, right: 0, padding: '12px 20px 16px', background: 'linear-gradient(transparent, rgba(0,0,0,0.85))', transition: 'opacity 0.3s', zIndex: 30, pointerEvents: 'all' },
+  fsSeekRow:  { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 },
+  fsBtnRow:   { display: 'flex', alignItems: 'center', gap: 8 },
+  fsSeekBar:  { flex: 1, accentColor: '#e63950', cursor: 'pointer', height: 4 },
+  fsTime:     { fontSize: 14, color: '#ddd', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', minWidth: 60, textAlign: 'center' },
+  fsBtn:      { background: 'none', border: 'none', color: '#fff', fontSize: 22, cursor: 'pointer', padding: '4px 8px', lineHeight: 1, opacity: 0.9 },
 }

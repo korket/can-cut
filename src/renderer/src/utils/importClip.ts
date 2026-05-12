@@ -74,13 +74,14 @@ export async function importClip(path: string): Promise<MediaClip | null> {
   }
 }
 
-export async function importAndAddClips(paths: string[]): Promise<MediaClip[]> {
+export async function importAndAddClips(paths: string[], folderId?: string): Promise<MediaClip[]> {
   const { addClip } = useEditorStore.getState()
   const results: MediaClip[] = []
   for (const path of paths) {
     if (!isSupportedMedia(path)) continue
     const clip = await importClip(path)
     if (clip) {
+      if (folderId) clip.folderId = folderId
       addClip(clip)
       results.push(clip)
     }

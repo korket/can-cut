@@ -4,7 +4,10 @@ contextBridge.exposeInMainWorld('api', {
   openFiles:    () => ipcRenderer.invoke('dialog:openFiles'),
   getVideoInfo: (path: string) => ipcRenderer.invoke('ffprobe:getInfo', path),
   getThumbnail: (path: string, timeMs: number) => ipcRenderer.invoke('ffmpeg:thumbnail', path, timeMs),
-  exportVideo:  (options: unknown) => ipcRenderer.invoke('ffmpeg:export', options),
+  exportVideo:       (options: unknown) => ipcRenderer.invoke('ffmpeg:export', options),
+  startFrameExport:  (opts: unknown) => ipcRenderer.invoke('export:frameStart', opts),
+  sendExportFrame:   (buf: ArrayBuffer) => ipcRenderer.invoke('export:frameSend', buf),
+  finishFrameExport: () => ipcRenderer.invoke('export:frameFinish'),
   openPath:     (path: string) => ipcRenderer.invoke('shell:openPath', path),
   onExportProgress: (cb: (pct: number) => void) => {
     const handler = (_: unknown, pct: number) => cb(pct)

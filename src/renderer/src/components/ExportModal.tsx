@@ -1,52 +1,32 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useEditorStore } from '../store/useEditorStore'
+import { renderAndExport } from '../utils/exportRenderer'
 
 interface Props {
   onClose: () => void
 }
 
 export default function ExportModal({ onClose }: Props) {
-  const { clips, timelineItems, textOverlays } = useEditorStore()
+  const { clips, timelineItems, textOverlays, getTimelineDuration } = useEditorStore()
   const [resolution, setResolution] = useState('1920x1080')
   const [fps, setFps] = useState(30)
   const [exporting, setExporting] = useState(false)
   const [progress, setProgress] = useState(0)
   const [result, setResult] = useState<{ success?: boolean; path?: string; error?: string } | null>(null)
 
-  useEffect(() => {
-    const unsub = window.api.onExportProgress((pct) => setProgress(Math.round(pct)))
-    return unsub
-  }, [])
-
   async function handleExport() {
     if (timelineItems.length === 0) return
     setExporting(true)
     setProgress(0)
     setResult(null)
-
-    const exportClips = timelineItems
-      .sort((a, b) => a.startTime - b.startTime)
-      .map((item) => {
-        const clip = clips.find((c) => c.id === item.clipId)!
-        return { path: clip.path, trimStart: item.trimStart, trimEnd: item.trimEnd, type: clip.type }
-      })
-      .filter((c) => c.path)
-
-    const exportOverlays = textOverlays.map((o) => ({
-      text: o.text,
-      color: o.color,
-      fontSize: o.fontSize,
-      x: o.x,
-      y: o.y,
-      startTime: o.startTime,
-      endTime: o.endTime
-    }))
-
     try {
-      const res = await window.api.exportVideo({ clips: exportClips, textOverlays: exportOverlays, resolution, fps })
+      const res = await renderAndExport(
+        { resolution, fps, duration: getTimelineDuration(), timelineItems, clips, textOverlays },
+        (pct) => setProgress(Math.round(pct))
+      )
       if (res?.canceled) { setExporting(false); return }
       setResult(res)
-    } catch (e: any) {
+    } catch (e: unknown) {
       setResult({ error: String(e) })
     }
     setExporting(false)

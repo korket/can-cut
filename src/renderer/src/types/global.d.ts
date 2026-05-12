@@ -12,6 +12,9 @@ interface Window {
     getVideoInfo: (path: string) => Promise<any>
     getThumbnail: (path: string, timeMs: number) => Promise<string>
     exportVideo: (options: any) => Promise<any>
+    startFrameExport: (opts: any) => Promise<any>
+    sendExportFrame: (buf: ArrayBuffer) => Promise<any>
+    finishFrameExport: () => Promise<any>
     openPath: (path: string) => Promise<void>
     onExportProgress: (cb: (pct: number) => void) => () => void
     listProjects: () => Promise<ProjectMeta[]>

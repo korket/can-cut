@@ -72,6 +72,10 @@ interface EditorStore {
   addVideoTrack: () => void
   addAudioTrack: () => void
 
+  // Hover preview (media bin clip hovered → show in main player)
+  hoverPreviewClip: MediaClip | null
+  setHoverPreviewClip: (clip: MediaClip | null) => void
+
   // Helpers
   getTimelineDuration: () => number
 }
@@ -176,6 +180,9 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
   removeTextOverlay: (id) =>
     set((s) => ({ textOverlays: s.textOverlays.filter((o) => o.id !== id) })),
 
+  hoverPreviewClip: null,
+  setHoverPreviewClip: (clip) => set({ hoverPreviewClip: clip }),
+
   currentTime: 0,
   setCurrentTime: (t) => set({ currentTime: t }),
   isPlaying: false,
@@ -202,7 +209,12 @@ export const useEditorStore = create<EditorStore>((set, get) => ({
 
   videoTrackCount: 2,
   audioTrackCount: 2,
-  addVideoTrack: () => set((s) => ({ videoTrackCount: s.videoTrackCount + 1 })),
+  addVideoTrack: () => set((s) => ({
+    videoTrackCount: s.videoTrackCount + 1,
+    timelineItems: s.timelineItems.map(i =>
+      i.trackIndex >= s.videoTrackCount ? { ...i, trackIndex: i.trackIndex + 1 } : i
+    ),
+  })),
   addAudioTrack: () => set((s) => ({ audioTrackCount: s.audioTrackCount + 1 })),
 
   getTimelineDuration: () => {
