@@ -41,6 +41,8 @@ function buildTransformStyle(t: Transform, e: Effects): LayerStyle {
     outer: {
       transform: `translate(${t.posX}%, ${t.posY}%) rotate(${t.rotation}deg) rotateX(${t.pitch}deg) rotateY(${t.yaw}deg) scale(${sx}, ${sy})`,
       transformOrigin: `${t.anchorX * 100}% ${t.anchorY * 100}%`,
+      transformStyle: 'preserve-3d',
+      backfaceVisibility: 'hidden',
       filter: outerFilter,
     },
     inner: {
@@ -501,6 +503,23 @@ export default function PreviewPlayer() {
                 const { outStyle, inStyle, overlayOpacity } = transState
                   ? transitionStyles(transState.transition, transState.progress)
                   : { outStyle: {}, inStyle: {}, overlayOpacity: 0 }
+                const { opacity: outOpacity, ...outWrapperStyle } = outStyle
+                const { opacity: inOpacity, ...inWrapperStyle } = inStyle
+
+                const animTransform = typeof animStyle.transform === 'string' ? animStyle.transform : ''
+                const animFilter = typeof animStyle.filter === 'string' ? animStyle.filter : ''
+                const animOpacity = typeof animStyle.opacity === 'number' ? animStyle.opacity : 1
+                const transitionOpacity = typeof inOpacity === 'number' ? inOpacity : 1
+                const itemOuterStyle: React.CSSProperties = {
+                  ...itemStyle.outer,
+                  transform: [animTransform, itemStyle.outer.transform].filter(Boolean).join(' '),
+                  opacity: animOpacity * transitionOpacity,
+                  filter: [animFilter, itemStyle.outer.filter].filter(Boolean).join(' ') || undefined,
+                }
+                const outOuterStyle: React.CSSProperties = {
+                  ...outItemStyle.outer,
+                  opacity: typeof outOpacity === 'number' ? outOpacity : undefined,
+                }
 
                 const backdropBlur     = kfE.backdropBlur     ?? 0
                 const backdropBlurFade = kfE.backdropBlurFade ?? 600
@@ -509,7 +528,7 @@ export default function PreviewPlayer() {
                   : backdropBlur > 0 ? 1 : 0
 
                 return (
-                  <div key={item.id} style={{ position: 'absolute', inset: 0 }}>
+                  <div key={item.id} style={{ position: 'absolute', inset: 0, transformStyle: 'preserve-3d' }}>
                     {/* Backdrop blur — blurs everything painted behind this layer */}
                     {backdropBlur > 0 && (
                       <div style={{
@@ -523,8 +542,8 @@ export default function PreviewPlayer() {
 
                     {/* Outgoing (frozen) clip */}
                     {transState && outItem && outClip && (
-                      <div style={{ position: 'absolute', inset: 0, ...outStyle }}>
-                        <div style={{ position: 'absolute', inset: 0, ...outItemStyle.outer }}>
+                      <div style={{ position: 'absolute', inset: 0, transformStyle: 'preserve-3d', ...outWrapperStyle }}>
+                        <div style={{ position: 'absolute', inset: 0, ...outOuterStyle }}>
                           {outClip.type === 'video'
                             ? <video ref={getVidRef(`${outItem.id}_out`)} style={{ ...styles.media, ...outItemStyle.inner }} playsInline />
                             : outClip.type === 'solid'
@@ -536,8 +555,8 @@ export default function PreviewPlayer() {
                     )}
 
                     {/* Incoming / current clip */}
-                    <div style={{ ...styles.animWrapper, ...animStyle, ...inStyle }}>
-                      <div style={{ position: 'absolute', inset: 0, ...itemStyle.outer }}>
+                    <div style={{ ...styles.animWrapper, ...inWrapperStyle }}>
+                      <div style={{ position: 'absolute', inset: 0, ...itemOuterStyle }}>
                         {clip.type === 'video'
                           ? <video ref={getVidRef(item.id)} style={{ ...styles.media, ...itemStyle.inner }} playsInline />
                           : clip.type === 'solid'
@@ -742,8 +761,10 @@ function TransformOverlay({ item, viewportEl, onUpdate }: {
   const sy = t.scaleY * (t.flipV ? -1 : 1)
   const boxStyle: React.CSSProperties = {
     position: 'absolute', inset: 0, pointerEvents: 'none',
-    transform: `translate(${t.posX}%, ${t.posY}%) rotate(${t.rotation}deg) scale(${sx}, ${sy})`,
+    transform: `translate(${t.posX}%, ${t.posY}%) rotate(${t.rotation}deg) rotateX(${t.pitch}deg) rotateY(${t.yaw}deg) scale(${sx}, ${sy})`,
     transformOrigin: `${t.anchorX * 100}% ${t.anchorY * 100}%`,
+    transformStyle: 'preserve-3d',
+    backfaceVisibility: 'hidden',
   }
 
   const H = 9
@@ -806,8 +827,8 @@ function TextOverlayEl({ overlay }: { overlay: TextOverlay }) {
 const styles: Record<string, React.CSSProperties> = {
   container:    { display: 'flex', flexDirection: 'column', height: '100%', background: '#111', alignItems: 'center' },
   viewportWrap: { display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', background: '#1a1a1a', position: 'relative', flexShrink: 0 },
-  viewport:     { position: 'relative', background: '#000', width: '100%', height: '100%', perspective: '800px', overflow: 'hidden' },
-  animWrapper:  { position: 'absolute', inset: 0 },
+  viewport:     { position: 'relative', background: '#000', width: '100%', height: '100%', perspective: '800px', perspectiveOrigin: '50% 50%', transformStyle: 'preserve-3d', overflow: 'hidden' },
+  animWrapper:  { position: 'absolute', inset: 0, transformStyle: 'preserve-3d' },
   media:        { width: '100%', height: '100%', objectFit: 'contain', display: 'block' },
   empty:        { position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#444', fontSize: 14 },
   controls:     { height: 52, width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '0 14px', borderTop: '1px solid #2a2a2a', flexShrink: 0 },
