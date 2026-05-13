@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
+    "benchmark:baseline": "node scripts/capture-baseline.mjs --build",
     "preview": "electron-vite preview",
     "start": "electron .",
     "dist": "electron-vite build && electron-builder --win"
