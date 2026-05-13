@@ -1,4 +1,4 @@
-import { useRef, useCallback, useEffect, useState, Fragment } from 'react'
+import { useRef, useCallback, useEffect, useLayoutEffect, useState, Fragment } from 'react'
 import { useEditorStore } from '../store/useEditorStore'
 import { useShortcutsStore } from '../store/useShortcutsStore'
 import type { TransitionType } from '../types'
@@ -46,10 +46,30 @@ export default function Timeline() {
     setTransitionPopup({ itemId, rect })
   }
 
-  const containerRef = useRef<HTMLDivElement>(null)   // tracks scroll area
-  const rulerRef     = useRef<HTMLDivElement>(null)   // ruler scroll area (horiz only)
-  const headerRef    = useRef<HTMLDivElement>(null)   // header scroll area (vert only)
-  const wrapperRef   = useRef<HTMLDivElement>(null)   // outermost timeline div
+  const containerRef    = useRef<HTMLDivElement>(null)   // tracks scroll area
+  const rulerRef        = useRef<HTMLDivElement>(null)   // ruler scroll area (horiz only)
+  const headerRef       = useRef<HTMLDivElement>(null)   // header scroll area (vert only)
+  const wrapperRef      = useRef<HTMLDivElement>(null)   // outermost timeline div
+  const pendingScrollRef = useRef<number | null>(null)   // scroll target after zoom render
+
+  // Apply any pending scroll correction after the zoom-triggered render so
+  // the content has already resized before we set scrollLeft.
+  useLayoutEffect(() => {
+    if (pendingScrollRef.current !== null && containerRef.current) {
+      containerRef.current.scrollLeft = pendingScrollRef.current
+      pendingScrollRef.current = null
+    }
+  })
+
+  // Zoom anchored to the playhead: keep currentTime at the same screen X.
+  function applyZoom(newZ: number) {
+    const { zoom: oldZ, setZoom, currentTime } = useEditorStore.getState()
+    const clamped = Math.max(10, Math.min(2000, newZ))
+    if (containerRef.current) {
+      pendingScrollRef.current = containerRef.current.scrollLeft + currentTime * (clamped - oldZ) / 1000
+    }
+    setZoom(clamped)
+  }
   const duration = Math.max(getTimelineDuration() + 5000, 30000)
   const pxPerMs = zoom / 1000
 
@@ -278,6 +298,19 @@ export default function Timeline() {
 
   const onScrubMove = useCallback((e: MouseEvent) => {
     if (!scrubbing.current) return
+    // Auto-scroll when cursor is near/past the left or right edge.
+    const container = containerRef.current
+    if (container) {
+      const rect  = container.getBoundingClientRect()
+      const ZONE  = 80  // px from edge to begin scrolling
+      if (e.clientX < rect.left + ZONE) {
+        const speed = Math.ceil((ZONE - (e.clientX - rect.left)) / 2)
+        container.scrollLeft = Math.max(0, container.scrollLeft - speed)
+      } else if (e.clientX > rect.right - ZONE) {
+        const speed = Math.ceil((e.clientX - (rect.right - ZONE)) / 2)
+        container.scrollLeft += speed
+      }
+    }
     seekToX(e.clientX)
   }, [pxPerMs, snapEnabled])
 
@@ -305,8 +338,7 @@ export default function Timeline() {
         if (tracks) tracks.scrollLeft += e.deltaY
       } else if (matches(zoomSc)) {
         e.preventDefault()
-        const { zoom: z, setZoom: sz } = useEditorStore.getState()
-        sz(z + (e.deltaY < 0 ? 20 : -20))
+        applyZoom(useEditorStore.getState().zoom + (e.deltaY < 0 ? 20 : -20))
       }
     }
     el.addEventListener('wheel', onWheel, { passive: false })
@@ -409,9 +441,9 @@ export default function Timeline() {
       <div style={styles.toolbar}>
         <span style={styles.toolbarLabel}>Timeline</span>
         <div style={styles.zoomRow}>
-          <button style={styles.zoomBtn} onClick={() => setZoom(zoom - 20)}>−</button>
+          <button style={styles.zoomBtn} onClick={() => applyZoom(zoom - 20)}>−</button>
           <span style={styles.zoomLabel}>{zoom}px/s</span>
-          <button style={styles.zoomBtn} onClick={() => setZoom(zoom + 20)}>+</button>
+          <button style={styles.zoomBtn} onClick={() => applyZoom(zoom + 20)}>+</button>
           <button style={{ ...styles.snapBtn, ...(snapEnabled ? styles.snapActive : {}) }} onClick={() => setSnapEnabled(!snapEnabled)}>Snap</button>
         </div>
 
@@ -623,7 +655,9 @@ function WaveformBars({ path, trimStart, trimEnd, duration, volume }: {
     canvas.width  = Math.round(rect.width  * dpr)
     canvas.height = Math.round(rect.height * dpr)
     const ctx = canvas.getContext('2d')!
-    const W = canvas.width, H = canvas.height, mid = H / 2
+    const W = canvas.width, H = canvas.height
+    const mid = H / 2
+    const maxH = mid - 1
 
     ctx.clearRect(0, 0, W, H)
 
@@ -631,36 +665,41 @@ function WaveformBars({ path, trimStart, trimEnd, duration, volume }: {
     const s0 = Math.floor((trimStart / duration) * totalSamples)
     const s1 = Math.ceil( (trimEnd   / duration) * totalSamples)
     const span = Math.max(1, s1 - s0)
+    const volScale = Math.min(2, volume / 100)
 
-    // Draw per-pixel column: peak (wide, faint) + RMS (narrower, bright)
+    // ±50% amplitude reference lines (Audacity-style)
+    const y50 = Math.round(mid - maxH * 0.5)
+    ctx.fillStyle = 'rgba(52, 172, 196, 0.2)'
+    ctx.fillRect(0, y50,           W, 1)
+    ctx.fillRect(0, Math.round(mid + maxH * 0.5), W, 1)
+
+    // Per-pixel column: peak envelope + RMS body
     for (let x = 0; x < W; x++) {
       const lo = s0 + Math.floor( (x / W)       * span)
       const hi = s0 + Math.floor(((x + 1) / W)  * span)
 
-      let maxPeak = 0, sumRms = 0, count = 0
+      let peak = 0, sumSq = 0, count = 0
       for (let i = lo; i < Math.min(hi + 1, totalSamples); i++) {
-        if (waveform.peaks[i] > maxPeak) maxPeak = waveform.peaks[i]
-        sumRms += waveform.rms[i] * waveform.rms[i]
+        if (waveform.peaks[i] > peak) peak = waveform.peaks[i]
+        sumSq += waveform.rms[i] * waveform.rms[i]
         count++
       }
-      const rmsVal = count > 0 ? Math.sqrt(sumRms / count) : 0
+      const rms = count > 0 ? Math.sqrt(sumSq / count) : 0
 
-      const volScale = Math.min(2, volume / 100)
-
-      // Peak layer
-      const pH = Math.max(1, Math.min(mid - 1, maxPeak * (mid - 1) * 0.96 * volScale))
-      ctx.fillStyle = 'rgba(90, 190, 255, 0.28)'
+      // Peak envelope — outer, translucent teal (Audacity outer fill)
+      const pH = Math.max(1, Math.min(maxH, peak * maxH * volScale))
+      ctx.fillStyle = 'rgba(46, 154, 180, 0.52)'
       ctx.fillRect(x, mid - pH, 1, pH * 2)
 
-      // RMS layer (brighter, slightly narrower)
-      const rH = Math.max(1, Math.min(mid - 1, rmsVal * (mid - 1) * 0.96 * volScale))
-      ctx.fillStyle = 'rgba(160, 220, 255, 0.90)'
+      // RMS body — inner, bright mint (Audacity inner fill)
+      const rH = Math.max(1, Math.min(maxH, rms * maxH * volScale))
+      ctx.fillStyle = 'rgba(78, 210, 228, 0.94)'
       ctx.fillRect(x, mid - rH, 1, rH * 2)
     }
 
-    // Center line
-    ctx.fillStyle = 'rgba(120, 200, 255, 0.25)'
-    ctx.fillRect(0, mid - 0.5, W, 1)
+    // Zero-crossing line
+    ctx.fillStyle = 'rgba(52, 172, 196, 0.5)'
+    ctx.fillRect(0, mid, W, 1)
   }, [waveform, trimStart, trimEnd, duration, volume])
 
   useEffect(() => { draw() }, [draw])
