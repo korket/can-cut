@@ -134,6 +134,7 @@ interface Window {
     reportRendererExportProgress?: (jobId: string, pct: number) => Promise<void>
     completeRendererExport?: (jobId: string, result: ExportResult) => Promise<void>
     openPath: (path: string) => Promise<void>
+    listSystemFonts: () => Promise<string[]>
     onExportJobsChanged: (cb: (jobs: unknown[]) => void) => () => void
     onRendererExportJob?: (cb: (payload: RendererExportJobPayload) => void) => () => void
     onRendererExportCancel?: (cb: (payload: { jobId: string }) => void) => () => void

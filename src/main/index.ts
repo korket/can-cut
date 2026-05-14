@@ -8,6 +8,7 @@ import {
 } from './export/jobService'
 import { createMediaAnalysisService, registerMediaAnalysisIpc } from './mediaAnalysis'
 import { createProjectStore, registerProjectIpc } from './projects'
+import { registerSystemFontIpc } from './systemFonts'
 
 if (!app.requestSingleInstanceLock()) {
   app.quit()
@@ -232,5 +233,6 @@ registerExportIpc(ipcMain, {
     : null,
 })
 ipcMain.handle('shell:openPath', (_event, path: string) => shell.openPath(path))
+registerSystemFontIpc(ipcMain)
 registerMediaAnalysisIpc(ipcMain, mediaAnalysis)
 registerProjectIpc(ipcMain, projectStore)

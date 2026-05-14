@@ -1019,38 +1019,62 @@ function AnimationSection({ animation: a, clipDuration, update, flat }: {
 }
 
 // ── Text overlay properties ───────────────────────────────────────────────────
-const TITLE_FONT_OPTIONS = [
-  { label: 'Sans Serif', value: 'sans-serif' },
-  { label: 'Serif', value: 'serif' },
-  { label: 'Monospace', value: 'monospace' },
-  { label: 'Arial', value: 'Arial' },
-  { label: 'Arial Black', value: 'Arial Black' },
-  { label: 'Aptos', value: 'Aptos' },
-  { label: 'Calibri', value: 'Calibri' },
-  { label: 'Cambria', value: 'Cambria' },
-  { label: 'Consolas', value: 'Consolas' },
-  { label: 'Georgia', value: 'Georgia' },
-  { label: 'Impact', value: 'Impact' },
-  { label: 'Segoe UI', value: 'Segoe UI' },
-  { label: 'Tahoma', value: 'Tahoma' },
-  { label: 'Times New Roman', value: 'Times New Roman' },
-  { label: 'Trebuchet MS', value: 'Trebuchet MS' },
-  { label: 'Verdana', value: 'Verdana' },
-]
+const FALLBACK_TITLE_FONTS = ['sans-serif', 'serif', 'monospace']
+let cachedSystemFonts: string[] | null = null
+
+async function loadSystemFonts(): Promise<string[]> {
+  if (cachedSystemFonts) return cachedSystemFonts
+
+  try {
+    const fonts = await window.api.listSystemFonts()
+    cachedSystemFonts = fonts.length > 0 ? fonts : FALLBACK_TITLE_FONTS
+  } catch {
+    cachedSystemFonts = FALLBACK_TITLE_FONTS
+  }
+
+  return cachedSystemFonts
+}
 
 function TextProps({ overlay, update }: {
   overlay: TextOverlay
   update: (c: Partial<TextOverlay>) => void
 }) {
   const fontFamily = overlay.fontFamily || 'sans-serif'
-  const selectedPreset = TITLE_FONT_OPTIONS.some(option => option.value === fontFamily)
-    ? fontFamily
-    : '__custom'
-  const [showCustomFont, setShowCustomFont] = useState(selectedPreset === '__custom')
+  const [systemFonts, setSystemFonts] = useState(cachedSystemFonts ?? FALLBACK_TITLE_FONTS)
+  const [fontQuery, setFontQuery] = useState(fontFamily)
+  const [fontMenuOpen, setFontMenuOpen] = useState(false)
+  const selectingFontRef = useRef(false)
 
   useEffect(() => {
-    setShowCustomFont(selectedPreset === '__custom')
-  }, [overlay.id, selectedPreset])
+    let cancelled = false
+    loadSystemFonts().then(fonts => {
+      if (!cancelled) setSystemFonts(fonts)
+    })
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    if (!fontMenuOpen) setFontQuery(fontFamily)
+  }, [fontFamily, fontMenuOpen])
+
+  const fontOptions = systemFonts.some(font => font.toLocaleLowerCase() === fontFamily.toLocaleLowerCase())
+    ? systemFonts
+    : [fontFamily, ...systemFonts]
+  const fontSearch = fontQuery.trim().toLocaleLowerCase()
+  const visibleFonts = fontSearch
+    ? fontOptions.filter(font => font.toLocaleLowerCase().includes(fontSearch))
+    : fontOptions
+
+  function applyFont(next: string) {
+    const family = next.trim()
+    if (!family) {
+      setFontQuery(fontFamily)
+      return
+    }
+    update({ fontFamily: family })
+    setFontQuery(family)
+    setFontMenuOpen(false)
+  }
 
   return (
     <div style={styles.section}>
@@ -1059,35 +1083,61 @@ function TextProps({ overlay, update }: {
       <textarea style={styles.textarea} value={overlay.text} onChange={e => update({ text: e.target.value })} rows={2} />
 
       <label style={styles.label}>Font</label>
-      <select
-        value={showCustomFont ? '__custom' : selectedPreset}
-        onChange={e => {
-          if (e.target.value === '__custom') {
-            setShowCustomFont(true)
-          } else {
-            setShowCustomFont(false)
-            update({ fontFamily: e.target.value })
-          }
-        }}
-        style={styles.input}
-      >
-        {TITLE_FONT_OPTIONS.map(option => (
-          <option key={option.value} value={option.value}>{option.label}</option>
-        ))}
-        <option value="__custom">Custom...</option>
-      </select>
-
-      {showCustomFont && (
-        <>
-          <label style={styles.label}>Custom Font Family</label>
-          <input
-            value={fontFamily}
-            onChange={e => update({ fontFamily: e.target.value || 'sans-serif' })}
-            placeholder="Installed font family"
-            style={styles.input}
-          />
-        </>
-      )}
+      <div style={styles.fontPicker}>
+        <input
+          value={fontMenuOpen ? fontQuery : fontFamily}
+          onFocus={() => {
+            setFontMenuOpen(true)
+            setFontQuery('')
+          }}
+          onChange={e => setFontQuery(e.target.value)}
+          onBlur={() => {
+            setTimeout(() => {
+              if (selectingFontRef.current) {
+                selectingFontRef.current = false
+                return
+              }
+              if (fontQuery.trim()) applyFont(fontQuery)
+              else setFontQuery(fontFamily)
+              setFontMenuOpen(false)
+            }, 120)
+          }}
+          onKeyDown={e => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              applyFont(visibleFonts[0] ?? fontQuery)
+            } else if (e.key === 'Escape') {
+              setFontQuery(fontFamily)
+              setFontMenuOpen(false)
+            }
+            e.stopPropagation()
+          }}
+          placeholder="Search fonts"
+          style={styles.input}
+        />
+        {fontMenuOpen && (
+          <div style={styles.fontMenu}>
+            {(visibleFonts.length > 0 ? visibleFonts : [fontQuery]).map(font => (
+              <button
+                key={font}
+                type="button"
+                style={{
+                  ...styles.fontOption,
+                  ...(font.toLocaleLowerCase() === fontFamily.toLocaleLowerCase() ? styles.fontOptionActive : {}),
+                }}
+                onMouseDown={e => {
+                  selectingFontRef.current = true
+                  e.preventDefault()
+                  applyFont(font)
+                }}
+                title={font}
+              >
+                <span style={{ ...styles.fontOptionName, fontFamily: font }}>{font}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
 
       <label style={styles.label}>Font Size</label>
       <div style={styles.row}>
@@ -1212,6 +1262,11 @@ const styles: Record<string, React.CSSProperties> = {
 
   label:       { fontSize: 12, color: '#aaa', padding: '7px 14px 2px', display: 'block' },
   input:       { background: '#1e1e1e', border: '1px solid #2c2c2c', color: '#ddd', borderRadius: 4, padding: '6px 10px', fontSize: 13, margin: '0 14px 6px', display: 'block', width: 'calc(100% - 28px)', boxSizing: 'border-box' },
+  fontPicker:  { position: 'relative' },
+  fontMenu:    { maxHeight: 210, overflowY: 'auto', margin: '-3px 14px 8px', border: '1px solid #333', borderRadius: 4, background: '#151515', boxShadow: '0 8px 18px rgba(0,0,0,0.35)', padding: 3 },
+  fontOption:  { display: 'block', width: '100%', background: 'transparent', border: 'none', color: '#ccc', textAlign: 'left', padding: '6px 8px', borderRadius: 3, cursor: 'pointer', fontSize: 12 },
+  fontOptionActive: { background: '#2a1620', color: '#fff' },
+  fontOptionName: { display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   textarea:    { background: '#1e1e1e', border: '1px solid #2c2c2c', color: '#ddd', borderRadius: 4, padding: '6px 10px', fontSize: 13, resize: 'vertical', margin: '0 14px 6px', display: 'block', width: 'calc(100% - 28px)', boxSizing: 'border-box' },
   range:       { flex: 1, accentColor: '#e63950', height: 18 },
   value:       { fontSize: 12, color: '#666' },

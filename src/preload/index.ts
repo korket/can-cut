@@ -13,6 +13,7 @@ const appApi = {
   cancelExportJob:   (jobId: string) => ipcRenderer.invoke('export:jobCancel', jobId),
   removeExportJob:   (jobId: string) => ipcRenderer.invoke('export:jobRemove', jobId),
   openPath:     (path: string) => ipcRenderer.invoke('shell:openPath', path),
+  listSystemFonts: () => ipcRenderer.invoke('system:listFonts'),
   onExportJobsChanged: (cb: (jobs: unknown[]) => void) => {
     const handler = (_: unknown, jobs: unknown[]) => cb(jobs)
     ipcRenderer.on('export:jobsChanged', handler)
