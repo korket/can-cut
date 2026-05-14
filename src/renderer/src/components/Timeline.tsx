@@ -688,7 +688,7 @@ function WaveformBars({ path, trimStart, trimEnd, volume, kind }: {
     const startIndex = Math.max(0, Math.floor((trimStart / 1000) * level.pointsPerSecond))
     const endIndex = Math.max(startIndex + 1, Math.ceil((trimEnd / 1000) * level.pointsPerSecond))
     const span = Math.max(1, endIndex - startIndex)
-    const volScale = Math.max(0, Math.min(2, volume / 100))
+    const volScale = volume <= 0 ? 0.18 : Math.max(0.28, Math.min(2, volume / 100))
 
     drawWaveformCenterLines(ctx, H, W, laneCount, colors.center)
 
@@ -731,7 +731,7 @@ function WaveformBars({ path, trimStart, trimEnd, volume, kind }: {
   return (
     <canvas
       ref={canvasRef}
-      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block', pointerEvents: 'none' }}
+      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block', pointerEvents: 'none', zIndex: 1 }}
     />
   )
 }

@@ -115,7 +115,11 @@ export function createMediaAnalysisService(getCacheDir: () => string): MediaAnal
 }
 
 export function registerMediaAnalysisIpc(ipcMain: IpcMain, service: MediaAnalysisService): void {
-  ipcMain.handle('media:waveform', (_event, path: string) => service.getWaveform(path))
+  ipcMain.handle('media:waveform', async (_event, path: string) => {
+    const result = await service.getWaveform(path)
+    if ('error' in result) console.warn(`Waveform analysis failed for ${path}: ${result.error}`)
+    return result
+  })
 }
 
 async function getCachedOrAnalyze(
