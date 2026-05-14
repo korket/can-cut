@@ -96,7 +96,6 @@ export function createPreviewEngine(options: PreviewEngineOptions): PreviewEngin
         renderer.clear()
         return
       }
-      audio.seek(timeMs, currentParts.timelineItems)
       renderer.render(timeMs, currentParts.timelineItems, currentParts.clips, currentParts.textOverlays)
     },
     play(timeMs: number) {

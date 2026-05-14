@@ -24,7 +24,7 @@ export function createCanvasPreviewRenderer(
   canvas.width = width
   canvas.height = height
 
-  const ctx = canvas.getContext('2d', { willReadFrequently: true })
+  const ctx = canvas.getContext('2d', { alpha: false })
   if (!ctx) throw new Error('Could not create preview canvas context')
 
   let disposed = false
@@ -69,7 +69,8 @@ export function createCanvasPreviewRenderer(
             request.timelineItems,
             request.clips,
             request.textOverlays,
-            media
+            media,
+            { seekTimeoutMs: 90 }
           )
         } catch (err) {
           console.error('Preview render failed', err)

@@ -224,9 +224,13 @@ export const useEditorStore = create<EditorStore>((set, get) => {
     setHoverPreviewClip: (clip) => set({ hoverPreviewClip: clip }),
 
     currentTime: 0,
-    setCurrentTime: (t) => set({ currentTime: t }),
+    setCurrentTime: (t) => {
+      if (get().currentTime !== t) set({ currentTime: t })
+    },
     isPlaying: false,
-    setIsPlaying: (v) => set({ isPlaying: v }),
+    setIsPlaying: (v) => {
+      if (get().isPlaying !== v) set({ isPlaying: v })
+    },
     duration: 0,
 
     selectedId: null,

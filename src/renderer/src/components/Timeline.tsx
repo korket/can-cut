@@ -245,6 +245,8 @@ export default function Timeline() {
 
   // ── Scrubbing ──────────────────────────────────────────────────────────────
   const scrubbing = useRef(false)
+  const pendingScrubX = useRef<number | null>(null)
+  const scrubRaf = useRef<number | null>(null)
 
   function startScrub(e: React.MouseEvent) {
     e.preventDefault()
@@ -276,17 +278,45 @@ export default function Timeline() {
     setCurrentTime(snapToFrame(snapped, currentFps))
   }
 
+  function flushScheduledScrub() {
+    scrubRaf.current = null
+    const clientX = pendingScrubX.current
+    pendingScrubX.current = null
+    if (clientX == null || !scrubbing.current) return
+    seekToX(clientX)
+  }
+
+  function scheduleSeekToX(clientX: number) {
+    pendingScrubX.current = clientX
+    if (scrubRaf.current != null) return
+    scrubRaf.current = requestAnimationFrame(flushScheduledScrub)
+  }
+
   const onScrubMove = useCallback((e: MouseEvent) => {
     if (!scrubbing.current) return
-    seekToX(e.clientX)
+    scheduleSeekToX(e.clientX)
   }, [pxPerMs, snapEnabled])
 
-  const onScrubUp = useCallback(() => { scrubbing.current = false; document.body.style.cursor = '' }, [])
+  const onScrubUp = useCallback(() => {
+    const finalX = pendingScrubX.current
+    if (scrubRaf.current != null) {
+      cancelAnimationFrame(scrubRaf.current)
+      scrubRaf.current = null
+    }
+    pendingScrubX.current = null
+    if (scrubbing.current && finalX != null) seekToX(finalX)
+    scrubbing.current = false
+    document.body.style.cursor = ''
+  }, [pxPerMs, snapEnabled])
 
   useEffect(() => {
     window.addEventListener('mousemove', onScrubMove)
     window.addEventListener('mouseup', onScrubUp)
-    return () => { window.removeEventListener('mousemove', onScrubMove); window.removeEventListener('mouseup', onScrubUp) }
+    return () => {
+      window.removeEventListener('mousemove', onScrubMove)
+      window.removeEventListener('mouseup', onScrubUp)
+      if (scrubRaf.current != null) cancelAnimationFrame(scrubRaf.current)
+    }
   }, [onScrubMove, onScrubUp])
 
   // ── Scroll / zoom via wheel ────────────────────────────────────────────────

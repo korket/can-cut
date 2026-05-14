@@ -26,7 +26,11 @@ function effectsFilter(ef: Effects): string {
   ].filter(Boolean).join(' ')
 }
 
-async function seekTo(video: HTMLVideoElement, timeSec: number): Promise<void> {
+export interface CanvasFrameRenderOptions {
+  seekTimeoutMs?: number
+}
+
+async function seekTo(video: HTMLVideoElement, timeSec: number, timeoutMs = 500): Promise<void> {
   const target = Math.max(0, timeSec)
   if (Math.abs(video.currentTime - target) < 0.001) return
   video.currentTime = target
@@ -37,7 +41,7 @@ async function seekTo(video: HTMLVideoElement, timeSec: number): Promise<void> {
       video.removeEventListener('error', done)
       resolve()
     }
-    const timeout = setTimeout(done, 500)
+    const timeout = setTimeout(done, timeoutMs)
     video.addEventListener('seeked', done, { once: true })
     video.addEventListener('error', done, { once: true })
   })
@@ -256,14 +260,15 @@ async function drawLayer(
   clipTime: number,
   videoEls: Map<string, HTMLVideoElement>, imageEls: Map<string, HTMLImageElement>,
   extraOpacity = 1,
-  wipeClipPath?: { left?: number; right?: number; top?: number; bottom?: number }
+  wipeClipPath?: { left?: number; right?: number; top?: number; bottom?: number },
+  options: CanvasFrameRenderOptions = {}
 ) {
   const clipDur = getItemDuration(item)
   const srcTime = getClipSourceTimeMs(item, item.startTime + clipTime) / 1000
 
   if (clip.type === 'video') {
     const v = videoEls.get(item.id)
-    if (v) await seekTo(v, srcTime)
+    if (v) await seekTo(v, srcTime, options.seekTimeoutMs)
   }
 
   const { transform: tr, effects: ef, animation } = evaluateClipAtTime(item, clipTime)
@@ -342,7 +347,8 @@ function applyWipeClip(
 export async function renderCanvasFrame(
   ctx: CanvasRenderingContext2D, W: number, H: number, timeMs: number,
   timelineItems: TimelineItem[], clips: MediaClip[], textOverlays: TextOverlay[],
-  media: LoadedCanvasMedia
+  media: LoadedCanvasMedia,
+  options: CanvasFrameRenderOptions = {}
 ) {
   const { videoEls, imageEls } = media
 
@@ -379,12 +385,12 @@ export async function renderCanvasFrame(
 
         switch (trans.type) {
           case 'crossfade':
-            await drawLayer(ctx, W, H, outItem, outClip, outClipTime, videoEls, imageEls, transition.outOpacity ?? 1)
-            await drawLayer(ctx, W, H, item,    clip,    clipTime,    videoEls, imageEls, transition.inOpacity ?? 1)
+            await drawLayer(ctx, W, H, outItem, outClip, outClipTime, videoEls, imageEls, transition.outOpacity ?? 1, undefined, options)
+            await drawLayer(ctx, W, H, item,    clip,    clipTime,    videoEls, imageEls, transition.inOpacity ?? 1, undefined, options)
             break
 
           case 'fade-color': {
-            await drawLayer(ctx, W, H, outItem, outClip, outClipTime, videoEls, imageEls, transition.outOpacity ?? 1)
+            await drawLayer(ctx, W, H, outItem, outClip, outClipTime, videoEls, imageEls, transition.outOpacity ?? 1, undefined, options)
             if (transition.overlayOpacity > 0) {
               ctx.save()
               ctx.globalAlpha = transition.overlayOpacity
@@ -392,39 +398,39 @@ export async function renderCanvasFrame(
               ctx.fillRect(0, 0, W, H)
               ctx.restore()
             }
-            await drawLayer(ctx, W, H, item, clip, clipTime, videoEls, imageEls, transition.inOpacity ?? 1)
+            await drawLayer(ctx, W, H, item, clip, clipTime, videoEls, imageEls, transition.inOpacity ?? 1, undefined, options)
             break
           }
 
           case 'wipe-left':
-            await drawLayer(ctx, W, H, outItem, outClip, outClipTime, videoEls, imageEls, 1)
+            await drawLayer(ctx, W, H, outItem, outClip, outClipTime, videoEls, imageEls, 1, undefined, options)
             await drawLayer(ctx, W, H, item, clip, clipTime, videoEls, imageEls, 1,
-              { right: 1 - progress })
+              { right: 1 - progress }, options)
             break
 
           case 'wipe-right':
-            await drawLayer(ctx, W, H, outItem, outClip, outClipTime, videoEls, imageEls, 1)
+            await drawLayer(ctx, W, H, outItem, outClip, outClipTime, videoEls, imageEls, 1, undefined, options)
             await drawLayer(ctx, W, H, item, clip, clipTime, videoEls, imageEls, 1,
-              { left: 1 - progress })
+              { left: 1 - progress }, options)
             break
 
           case 'wipe-up':
-            await drawLayer(ctx, W, H, outItem, outClip, outClipTime, videoEls, imageEls, 1)
+            await drawLayer(ctx, W, H, outItem, outClip, outClipTime, videoEls, imageEls, 1, undefined, options)
             await drawLayer(ctx, W, H, item, clip, clipTime, videoEls, imageEls, 1,
-              { bottom: 1 - progress })
+              { bottom: 1 - progress }, options)
             break
 
           case 'wipe-down':
-            await drawLayer(ctx, W, H, outItem, outClip, outClipTime, videoEls, imageEls, 1)
+            await drawLayer(ctx, W, H, outItem, outClip, outClipTime, videoEls, imageEls, 1, undefined, options)
             await drawLayer(ctx, W, H, item, clip, clipTime, videoEls, imageEls, 1,
-              { top: 1 - progress })
+              { top: 1 - progress }, options)
             break
         }
         continue
       }
     }
 
-    await drawLayer(ctx, W, H, item, clip, clipTime, videoEls, imageEls)
+    await drawLayer(ctx, W, H, item, clip, clipTime, videoEls, imageEls, 1, undefined, options)
   }
 
   // ── Text overlays ─────────────────────────────────────────────────────────
