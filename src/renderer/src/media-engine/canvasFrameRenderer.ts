@@ -1,14 +1,9 @@
-import type { TimelineItem, MediaClip, TextOverlay, Transform, Effects, KenBurns, Animation } from '../types'
-import { DEFAULT_TRANSFORM, DEFAULT_EFFECTS, DEFAULT_ANIMATION } from '../types'
-import { applyKeyframesToTransform, applyKeyframesToEffects } from './keyframes'
+import { evaluateClipAtTime, evaluateTransition } from '../editor-core/evaluation'
+import { getClipSourceTimeMs, getItemDuration, getItemEnd, isItemActiveAt } from '../editor-core/timeline'
+import type { TimelineItem, MediaClip, TextOverlay, Transform, Effects } from '../types'
+import type { LoadedCanvasMedia } from './mediaElementLoader'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
-
-function ease(p: number) { return p * p * (3 - 2 * p) }
-
-function itemEnd(item: TimelineItem) { return item.startTime + (item.trimEnd - item.trimStart) }
-
-function inRange(item: TimelineItem, t: number) { return t >= item.startTime && t < itemEnd(item) }
 
 function hexToRgba(hex: string, alpha: number): string {
   const h = hex.replace('#', '')
@@ -16,20 +11,6 @@ function hexToRgba(hex: string, alpha: number): string {
   const g = parseInt(h.slice(2, 4), 16)
   const b = parseInt(h.slice(4, 6), 16)
   return `rgba(${r},${g},${b},${alpha})`
-}
-
-function applyKenBurns(kb: KenBurns, clipTime: number, clipDur: number, tr: Transform): Transform {
-  const p = clipDur > 0 ? Math.max(0, clipTime / clipDur) : 0
-  const scale = kb.startScale + (kb.endScale - kb.startScale) * p
-  return {
-    ...tr,
-    scaleX: tr.scaleX * scale,
-    scaleY: tr.scaleY * scale,
-    posX: tr.posX + kb.startX + (kb.endX - kb.startX) * p,
-    posY: tr.posY + kb.startY + (kb.endY - kb.startY) * p,
-    anchorX: (kb.focalX ?? 50) / 100,
-    anchorY: (kb.focalY ?? 50) / 100,
-  }
 }
 
 function effectsFilter(ef: Effects): string {
@@ -49,7 +30,17 @@ async function seekTo(video: HTMLVideoElement, timeSec: number): Promise<void> {
   const target = Math.max(0, timeSec)
   if (Math.abs(video.currentTime - target) < 0.001) return
   video.currentTime = target
-  await new Promise<void>(res => video.addEventListener('seeked', () => res(), { once: true }))
+  await new Promise<void>((resolve) => {
+    const done = () => {
+      clearTimeout(timeout)
+      video.removeEventListener('seeked', done)
+      video.removeEventListener('error', done)
+      resolve()
+    }
+    const timeout = setTimeout(done, 500)
+    video.addEventListener('seeked', done, { once: true })
+    video.addEventListener('error', done, { once: true })
+  })
 }
 
 function drawMedia(
@@ -267,23 +258,15 @@ async function drawLayer(
   extraOpacity = 1,
   wipeClipPath?: { left?: number; right?: number; top?: number; bottom?: number }
 ) {
-  const clipDur = item.trimEnd - item.trimStart
-  const srcTime = (item.trimStart + clipTime) / 1000
+  const clipDur = getItemDuration(item)
+  const srcTime = getClipSourceTimeMs(item, item.startTime + clipTime) / 1000
 
   if (clip.type === 'video') {
     const v = videoEls.get(item.id)
     if (v) await seekTo(v, srcTime)
   }
 
-  // Keyframes
-  const kfTracks = item.keyframeTracks ?? []
-  let tr: Transform = { ...DEFAULT_TRANSFORM, ...item.transform }
-  let ef: Effects  = { ...DEFAULT_EFFECTS,   ...item.effects  }
-  if (kfTracks.length > 0) {
-    tr = applyKeyframesToTransform(kfTracks, tr, clipTime)
-    ef = applyKeyframesToEffects(kfTracks, ef, clipTime)
-  }
-  if (item.kenBurns) tr = applyKenBurns(item.kenBurns, clipTime, clipDur, tr)
+  const { transform: tr, effects: ef, animation } = evaluateClipAtTime(item, clipTime)
 
   // Backdrop blur: blur whatever is already on the canvas (lower layers) behind this clip
   const backdropBlur     = ef.backdropBlur     ?? 0
@@ -303,37 +286,9 @@ async function drawLayer(
     }
   }
 
-  // Animation outer
-  const anim: Animation = { ...DEFAULT_ANIMATION, ...item.animation }
-  let animOpacity = 1, animScale = 1, animTx = 0, animTy = 0, animBlur = 0
-
-  const inP  = anim.inEffect  !== 'none' && clipTime < anim.inDuration
-    ? ease(Math.max(0, Math.min(1, clipTime / anim.inDuration))) : 1
-  const outP = anim.outEffect !== 'none' && (clipDur - clipTime) < anim.outDuration
-    ? ease(Math.max(0, Math.min(1, (clipDur - clipTime) / anim.outDuration))) : 1
-
-  switch (anim.inEffect) {
-    case 'fade':        animOpacity *= inP; break
-    case 'zoom-in':     animScale = 0.3 + 0.7 * inP; break
-    case 'zoom-out':    animScale = 1.7 - 0.7 * inP; break
-    case 'slide-left':  animTx = (inP - 1) * W; break
-    case 'slide-right': animTx = (1 - inP) * W; break
-    case 'slide-up':    animTy = (inP - 1) * H; break
-    case 'slide-down':  animTy = (1 - inP) * H; break
-    case 'blur-in':     animBlur += 20 * (1 - inP); break
-  }
-  switch (anim.outEffect) {
-    case 'fade':        animOpacity *= outP; break
-    case 'zoom-in':     if (outP < 1) animScale *= 1 + 0.7 * (1 - outP); break
-    case 'zoom-out':    if (outP < 1) animScale *= outP * 0.7 + 0.3; break
-    case 'slide-left':  if (outP < 1) animTx = (outP - 1) * W; break
-    case 'slide-right': if (outP < 1) animTx = (1 - outP) * W; break
-    case 'slide-up':    if (outP < 1) animTy = (outP - 1) * H; break
-    case 'slide-down':  if (outP < 1) animTy = (1 - outP) * H; break
-    case 'blur-out':    if (outP < 1) animBlur += 20 * (1 - outP); break
-  }
-
-  const totalOpacity = animOpacity * extraOpacity
+  const animTx = animation.translateXPct / 100 * W
+  const animTy = animation.translateYPct / 100 * H
+  const totalOpacity = animation.opacity * extraOpacity
   const hasShadow = ef.shadowOpacity > 0
 
   if (hasShadow) {
@@ -341,12 +296,12 @@ async function drawLayer(
     const off = new OffscreenCanvas(W, H)
     const offCtx = off.getContext('2d')!
     offCtx.save()
-    drawClipContent(offCtx, W, H, tr, ef, animBlur, clip, videoEls, imageEls, item.id)
+    drawClipContent(offCtx, W, H, tr, ef, animation.blurPx, clip, videoEls, imageEls, item.id)
     offCtx.restore()
 
     ctx.save()
     ctx.translate(W / 2 + animTx, H / 2 + animTy)
-    ctx.scale(animScale, animScale)
+    ctx.scale(animation.scale, animation.scale)
     ctx.translate(-W / 2, -H / 2)
     ctx.globalAlpha = totalOpacity
     if (wipeClipPath) applyWipeClip(ctx, W, H, wipeClipPath)
@@ -359,11 +314,11 @@ async function drawLayer(
   } else {
     ctx.save()
     ctx.translate(W / 2 + animTx, H / 2 + animTy)
-    ctx.scale(animScale, animScale)
+    ctx.scale(animation.scale, animation.scale)
     ctx.translate(-W / 2, -H / 2)
     ctx.globalAlpha = totalOpacity
     if (wipeClipPath) applyWipeClip(ctx, W, H, wipeClipPath)
-    drawClipContent(ctx, W, H, tr, ef, animBlur, clip, videoEls, imageEls, item.id)
+    drawClipContent(ctx, W, H, tr, ef, animation.blurPx, clip, videoEls, imageEls, item.id)
     ctx.restore()
   }
 }
@@ -384,11 +339,13 @@ function applyWipeClip(
 
 // ── Per-frame render ──────────────────────────────────────────────────────
 
-async function renderFrame(
+export async function renderCanvasFrame(
   ctx: CanvasRenderingContext2D, W: number, H: number, timeMs: number,
   timelineItems: TimelineItem[], clips: MediaClip[], textOverlays: TextOverlay[],
-  videoEls: Map<string, HTMLVideoElement>, imageEls: Map<string, HTMLImageElement>
+  media: LoadedCanvasMedia
 ) {
+  const { videoEls, imageEls } = media
+
   ctx.setTransform(1, 0, 0, 1, 0, 0)
   ctx.filter = 'none'
   ctx.globalAlpha = 1
@@ -398,14 +355,13 @@ async function renderFrame(
   const layers = timelineItems
     .filter(item => {
       const c = clips.find(cl => cl.id === item.clipId)
-      return c && c.type !== 'audio' && inRange(item, timeMs)
+      return c && c.type !== 'audio' && isItemActiveAt(item, timeMs)
     })
     .sort((a, b) => a.trackIndex - b.trackIndex)
 
   for (const item of layers) {
     const clip = clips.find(c => c.id === item.clipId)!
     const clipTime = timeMs - item.startTime
-    const clipDur  = item.trimEnd - item.trimStart
 
     // ── Transition: find outgoing item and render it first ──────────────────
     const trans = item.transitionIn
@@ -413,32 +369,30 @@ async function renderFrame(
       const progress = clipTime / trans.duration
       const outItem  = timelineItems.find(i =>
         i.trackIndex === item.trackIndex && i.id !== item.id &&
-        Math.abs(itemEnd(i) - item.startTime) < 500
+        Math.abs(getItemEnd(i) - item.startTime) < 500
       )
       const outClip = outItem ? clips.find(c => c.id === outItem.clipId) : null
 
       if (outItem && outClip && outClip.type !== 'audio') {
-        const outClipTime = outItem.trimEnd - outItem.trimStart  // frozen at last frame
+        const outClipTime = getItemDuration(outItem)  // frozen at last frame
+        const transition = evaluateTransition(trans, progress)
 
         switch (trans.type) {
           case 'crossfade':
-            await drawLayer(ctx, W, H, outItem, outClip, outClipTime, videoEls, imageEls, 1 - progress)
-            await drawLayer(ctx, W, H, item,    clip,    clipTime,    videoEls, imageEls, progress)
+            await drawLayer(ctx, W, H, outItem, outClip, outClipTime, videoEls, imageEls, transition.outOpacity ?? 1)
+            await drawLayer(ctx, W, H, item,    clip,    clipTime,    videoEls, imageEls, transition.inOpacity ?? 1)
             break
 
           case 'fade-color': {
-            const outAlpha = Math.max(0, 1 - progress * 2)
-            const inAlpha  = Math.max(0, (progress - 0.5) * 2)
-            const overlayA = Math.sin(progress * Math.PI)
-            await drawLayer(ctx, W, H, outItem, outClip, outClipTime, videoEls, imageEls, outAlpha)
-            if (overlayA > 0) {
+            await drawLayer(ctx, W, H, outItem, outClip, outClipTime, videoEls, imageEls, transition.outOpacity ?? 1)
+            if (transition.overlayOpacity > 0) {
               ctx.save()
-              ctx.globalAlpha = overlayA
+              ctx.globalAlpha = transition.overlayOpacity
               ctx.fillStyle = trans.color
               ctx.fillRect(0, 0, W, H)
               ctx.restore()
             }
-            await drawLayer(ctx, W, H, item, clip, clipTime, videoEls, imageEls, inAlpha)
+            await drawLayer(ctx, W, H, item, clip, clipTime, videoEls, imageEls, transition.inOpacity ?? 1)
             break
           }
 
@@ -501,87 +455,3 @@ async function renderFrame(
 
 // ── Public API ─────────────────────────────────────────────────────────────
 
-export interface ExportRenderOptions {
-  resolution: string
-  fps: number
-  duration: number
-  timelineItems: TimelineItem[]
-  clips: MediaClip[]
-  textOverlays: TextOverlay[]
-}
-
-export async function renderAndExport(
-  opts: ExportRenderOptions,
-  onProgress: (pct: number) => void
-): Promise<{ success?: boolean; path?: string; error?: string; canceled?: boolean }> {
-
-  const [W, H] = opts.resolution.split('x').map(Number)
-  const { fps, duration: totalMs, timelineItems, clips, textOverlays } = opts
-  const frameMs = 1000 / fps
-  const frameCount = Math.ceil(totalMs / 1000 * fps)
-
-  // Pre-load all media elements
-  const videoEls = new Map<string, HTMLVideoElement>()
-  const imageEls = new Map<string, HTMLImageElement>()
-
-  const loads: Promise<void>[] = []
-  for (const item of timelineItems) {
-    const clip = clips.find(c => c.id === item.clipId)
-    if (!clip) continue
-    if (clip.type === 'video' && !videoEls.has(item.id)) {
-      const v = document.createElement('video')
-      v.src = `file://${clip.path}`; v.preload = 'auto'; v.muted = true
-      loads.push(new Promise<void>(res => {
-        v.addEventListener('loadedmetadata', () => res(), { once: true })
-        v.addEventListener('error', () => res(), { once: true })
-        v.load()
-      }))
-      videoEls.set(item.id, v)
-    } else if (clip.type === 'image' && !imageEls.has(clip.id)) {
-      const img = new Image()
-      img.src = `file://${clip.path}`
-      loads.push(new Promise<void>(res => { img.onload = () => res(); img.onerror = () => res() }))
-      imageEls.set(clip.id, img)
-    }
-  }
-  await Promise.all(loads)
-
-  const canvas = document.createElement('canvas')
-  canvas.width = W; canvas.height = H
-  const ctx = canvas.getContext('2d', { willReadFrequently: true })!
-
-  const startResult = await window.api.startFrameExport({
-    W, H, fps, totalMs,
-    clips: clips.map(c => ({ id: c.id, path: c.path ?? '', type: c.type, width: c.width, height: c.height })),
-    timelineItems: timelineItems.map(i => ({
-      id: i.id, clipId: i.clipId, trackIndex: i.trackIndex,
-      startTime: i.startTime, trimStart: i.trimStart, trimEnd: i.trimEnd,
-      volume: i.volume ?? 100,
-    })),
-  })
-  if (startResult?.canceled) return { canceled: true }
-  if (startResult?.error)    return { error: startResult.error }
-
-  try {
-    for (let f = 0; f < frameCount; f++) {
-      await renderFrame(ctx, W, H, f * frameMs, timelineItems, clips, textOverlays, videoEls, imageEls)
-
-      const blob = await new Promise<Blob>((res, rej) =>
-        canvas.toBlob(b => b ? res(b) : rej(new Error('toBlob failed')), 'image/jpeg', 0.92)
-      )
-      await window.api.sendExportFrame(await blob.arrayBuffer())
-      onProgress(Math.round((f + 1) / frameCount * 85))
-    }
-
-    onProgress(90)
-    const result = await window.api.finishFrameExport()
-    onProgress(100)
-    return result
-
-  } catch (err: unknown) {
-    await window.api.finishFrameExport().catch(() => {})
-    return { error: String(err) }
-  } finally {
-    videoEls.forEach(v => { v.src = ''; v.load() })
-  }
-}
