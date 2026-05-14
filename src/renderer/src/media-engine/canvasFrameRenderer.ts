@@ -57,13 +57,24 @@ function applyBackdropEffect(
     : 1
   if (progress <= 0) return
 
-  const off = new OffscreenCanvas(W, H)
-  off.getContext('2d')!.drawImage(ctx.canvas, 0, 0)
+  const pad = Math.ceil(backdropBlur * 3)
+  const off = new OffscreenCanvas(W + pad * 2, H + pad * 2)
+  const offCtx = off.getContext('2d')!
+
+  offCtx.drawImage(ctx.canvas, pad, pad)
+  offCtx.drawImage(ctx.canvas, 0, 0, W, 1, pad, 0, W, pad)
+  offCtx.drawImage(ctx.canvas, 0, H - 1, W, 1, pad, H + pad, W, pad)
+  offCtx.drawImage(ctx.canvas, 0, 0, 1, H, 0, pad, pad, H)
+  offCtx.drawImage(ctx.canvas, W - 1, 0, 1, H, W + pad, pad, pad, H)
+  offCtx.drawImage(ctx.canvas, 0, 0, 1, 1, 0, 0, pad, pad)
+  offCtx.drawImage(ctx.canvas, W - 1, 0, 1, 1, W + pad, 0, pad, pad)
+  offCtx.drawImage(ctx.canvas, 0, H - 1, 1, 1, 0, H + pad, pad, pad)
+  offCtx.drawImage(ctx.canvas, W - 1, H - 1, 1, 1, W + pad, H + pad, pad, pad)
 
   ctx.save()
   ctx.filter = `blur(${backdropBlur}px)`
   ctx.globalAlpha = progress
-  ctx.drawImage(off, 0, 0)
+  ctx.drawImage(off, -pad, -pad)
   ctx.restore()
 
   const backgroundOpacity = clamp01((ef.backdropOpacity ?? 100) / 100)
