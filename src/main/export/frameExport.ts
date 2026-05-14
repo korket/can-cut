@@ -56,10 +56,10 @@ function buildFrameExportArgs(options: FrameExportOptions, audioSources: FrameAu
 
     parts.push(`${audioLabels.join('')}amix=inputs=${audioLabels.length}:normalize=0:duration=longest[aout]`)
     args.push('-filter_complex', parts.join(';'))
-    args.push('-map', '0:v', '-c:v', encoder.videoCodec, '-pix_fmt', encoder.pixelFormat, '-preset', encoder.x264Preset, '-crf', String(encoder.crf))
+    args.push('-map', '0:v', '-c:v', encoder.videoCodec, '-pix_fmt', encoder.pixelFormat, '-preset', encoder.x264Preset, '-crf', String(encoder.crf), '-threads', '0')
     args.push('-map', '[aout]', '-c:a', encoder.audioCodec, '-b:a', encoder.audioBitrate)
   } else {
-    args.push('-c:v', encoder.videoCodec, '-pix_fmt', encoder.pixelFormat, '-preset', encoder.x264Preset, '-crf', String(encoder.crf))
+    args.push('-c:v', encoder.videoCodec, '-pix_fmt', encoder.pixelFormat, '-preset', encoder.x264Preset, '-crf', String(encoder.crf), '-threads', '0')
   }
 
   args.push(outPath)
@@ -71,6 +71,10 @@ function trimLogChunk(chunk: string): string[] {
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean)
+}
+
+function isNoisyFfmpegProgressLine(line: string): boolean {
+  return /^frame=\s*\d+/i.test(line) || /^size=\s*\S+\s+time=/i.test(line)
 }
 
 function markSessionClosed(session: FrameExportSession, code: number | null): void {
@@ -139,7 +143,9 @@ export function createFrameExportController(host: ExportEngineHost) {
       proc.stderr?.on('data', (data: Buffer) => {
         const text = data.toString()
         stderrBuf.push(text)
-        for (const line of trimLogChunk(text)) host.emitLog(jobId, line)
+        for (const line of trimLogChunk(text)) {
+          if (!isNoisyFfmpegProgressLine(line)) host.emitLog(jobId, line)
+        }
       })
 
       exportSessions.set(jobId, exportSession)

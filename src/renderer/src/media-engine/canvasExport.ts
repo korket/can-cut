@@ -24,12 +24,12 @@ export interface CanvasExportControls {
   outputPath?: string
 }
 
-function createCanvas(width: number, height: number) {
+function createCanvas(width: number, height: number, willReadFrequently: boolean) {
   const canvas = document.createElement('canvas')
   canvas.width = width
   canvas.height = height
 
-  const ctx = canvas.getContext('2d', { willReadFrequently: true })
+  const ctx = canvas.getContext('2d', { alpha: false, willReadFrequently })
   if (!ctx) throw new Error('Could not create export canvas')
 
   return { canvas, ctx }
@@ -80,8 +80,16 @@ export async function renderPlanToCanvasExport(
   const frameMs = 1000 / fps
   const frameCount = Math.ceil(totalMs / 1000 * fps)
   const media = await loadCanvasMedia(timelineItems, clips)
-  const { canvas, ctx } = createCanvas(width, height)
+  const { canvas, ctx } = createCanvas(width, height, encoder.framePipeFormat === 'raw-rgba')
   let session: FrameExportSession | null = null
+  let lastProgress = -1
+
+  function reportProgress(pct: number) {
+    const nextProgress = Math.max(0, Math.min(100, Math.round(pct)))
+    if (nextProgress === lastProgress) return
+    lastProgress = nextProgress
+    onProgress(nextProgress)
+  }
 
   try {
     const startResult = await startFrameExportSession(
@@ -112,7 +120,7 @@ export async function renderPlanToCanvasExport(
       )
 
       await session.sendFrame(await encodeCanvasFrame(canvas, ctx, width, height, encoder))
-      onProgress(Math.round((frame + 1) / frameCount * 85))
+      reportProgress((frame + 1) / frameCount * 85)
     }
 
     if (controls.isCanceled?.()) {
@@ -121,10 +129,10 @@ export async function renderPlanToCanvasExport(
       return { canceled: true }
     }
 
-    onProgress(90)
+    reportProgress(90)
     const result = await session.finish()
     session = null
-    onProgress(100)
+    reportProgress(100)
     return result
   } catch (err: unknown) {
     await session?.abort()

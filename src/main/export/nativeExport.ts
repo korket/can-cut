@@ -91,6 +91,10 @@ function progressFromTimemark(timemark: string | undefined, percent: number | un
   return 0
 }
 
+function isNoisyFfmpegProgressLine(line: string): boolean {
+  return /^frame=\s*\d+/i.test(line) || /^size=\s*\S+\s+time=/i.test(line)
+}
+
 async function exportNativeVideo(
   jobId: string,
   options: ExportOptions,
@@ -238,7 +242,7 @@ async function exportNativeVideo(
       .complexFilter(parts.join(';'))
       .map('[vout]')
       .videoCodec(encoder.videoCodec)
-      .outputOptions(['-y', `-crf ${encoder.crf}`, `-r ${fps}`, `-preset ${encoder.x264Preset}`, `-pix_fmt ${encoder.pixelFormat}`])
+      .outputOptions(['-y', `-crf ${encoder.crf}`, `-r ${fps}`, `-preset ${encoder.x264Preset}`, `-pix_fmt ${encoder.pixelFormat}`, '-threads 0'])
 
     if (audioLabels.length > 0) {
       cmd.map('[aout]').audioCodec(encoder.audioCodec).audioBitrate(encoder.audioBitrate)
@@ -249,7 +253,7 @@ async function exportNativeVideo(
       .on('start', (commandLine) => host.emitLog(jobId, `FFmpeg native command: ${commandLine}`))
       .on('stderr', (line) => {
         const message = String(line).trim()
-        if (message) host.emitLog(jobId, message)
+        if (message && !isNoisyFfmpegProgressLine(message)) host.emitLog(jobId, message)
       })
       .on('progress', (progress) => host.emitProgress(jobId, progressFromTimemark(progress.timemark, progress.percent, totalSec)))
       .on('end', () => {

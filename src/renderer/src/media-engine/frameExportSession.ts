@@ -110,9 +110,42 @@ export async function startFrameExportSession(
   if ('canceled' in startResult) return { canceled: true }
   if ('error' in startResult) return { error: startResult.error }
 
+  const rawFrameBytes = options.W * options.H * 4
+  const maxBatchBytes = options.encoder.framePipeFormat === 'raw-rgba'
+    ? Math.min(Math.max(rawFrameBytes * 2, 16 * 1024 * 1024), 64 * 1024 * 1024)
+    : 8 * 1024 * 1024
+  const maxBatchFrames = options.encoder.framePipeFormat === 'raw-rgba' ? 4 : 24
+  let pendingFrames: Uint8Array[] = []
+  let pendingBytes = 0
   let closed = false
+
+  async function flushFrames() {
+    if (pendingBytes === 0) return
+
+    const frames = pendingFrames
+    const byteLength = pendingBytes
+    pendingFrames = []
+    pendingBytes = 0
+
+    const payload = frames.length === 1
+      ? frames[0].buffer.slice(frames[0].byteOffset, frames[0].byteOffset + frames[0].byteLength)
+      : (() => {
+        const batch = new Uint8Array(byteLength)
+        let offset = 0
+        for (const frame of frames) {
+          batch.set(frame, offset)
+          offset += frame.byteLength
+        }
+        return batch.buffer
+      })()
+
+    const sendResult = await sendExportFrame(jobId, payload) as FrameExportSendResult
+    if ('error' in sendResult) throw new Error(sendResult.error)
+  }
+
   const finish = async () => {
     if (closed) return { error: 'frame export session already closed' }
+    await flushFrames()
     closed = true
     return finishFrameExport(jobId)
   }
@@ -121,13 +154,20 @@ export async function startFrameExportSession(
     session: {
       async sendFrame(frame: ArrayBuffer) {
         if (closed) throw new Error('frame export session already closed')
-        const sendResult = await sendExportFrame(jobId, frame) as FrameExportSendResult
-        if ('error' in sendResult) throw new Error(sendResult.error)
+        const view = new Uint8Array(frame)
+        pendingFrames.push(view)
+        pendingBytes += view.byteLength
+
+        if (pendingBytes >= maxBatchBytes || pendingFrames.length >= maxBatchFrames) {
+          await flushFrames()
+        }
       },
       finish,
       async abort() {
         if (closed) return
         closed = true
+        pendingFrames = []
+        pendingBytes = 0
         await cancelExport(jobId).catch(() => {})
       },
     },

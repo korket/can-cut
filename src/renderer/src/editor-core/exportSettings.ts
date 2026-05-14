@@ -37,15 +37,15 @@ export const EXPORT_PROFILES: ExportProfile[] = [
   {
     id: 'balanced',
     label: 'Balanced',
-    description: 'Good quality and speed',
+    description: 'Good quality and faster canvas export',
     encoder: {
       videoCodec: 'libx264',
-      x264Preset: 'fast',
+      x264Preset: 'veryfast',
       crf: 23,
       pixelFormat: 'yuv420p',
       audioCodec: 'aac',
       audioBitrate: '192k',
-      framePipeFormat: 'raw-rgba',
+      framePipeFormat: 'mjpeg',
       frameJpegQuality: 0.9,
     },
   },
