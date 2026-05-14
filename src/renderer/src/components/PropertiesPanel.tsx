@@ -232,8 +232,6 @@ export default function PropertiesPanel() {
         <div style={styles.empty}>Select a clip to edit its properties</div>
       )}
 
-      {textOverlays.length > 0 && <TextList />}
-
       {!isTextSelection && (
         <DefaultTransformSection
           enabled={defaultTransformEnabled}
@@ -1262,25 +1260,6 @@ function ClipProps({ item, clip, update }: {
   )
 }
 
-function TextList() {
-  const { textOverlays, setSelectedId, selectedId, removeTextOverlay } = useEditorStore()
-  return (
-    <div style={{ flexShrink: 0 }}>
-      <div style={{ ...styles.sectionTitle, padding: '10px 16px 6px', borderTop: '1px solid #1e1e1e' }}>Text Layers</div>
-      {textOverlays.map(o => (
-        <div
-          key={o.id}
-          style={{ ...styles.overlayRow, background: selectedId === o.id ? '#2a2a2a' : 'transparent' }}
-          onClick={() => setSelectedId(o.id)}
-        >
-          <span style={styles.overlayText}>{o.text.slice(0, 20)}</span>
-          <button style={styles.smallBtn} onClick={e => { e.stopPropagation(); removeTextOverlay(o.id) }}>×</button>
-        </div>
-      ))}
-    </div>
-  )
-}
-
 const styles: Record<string, React.CSSProperties> = {
   panel:       { display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', background: '#181818' },
   header:      { fontSize: 11, fontWeight: 700, color: '#555', padding: '11px 16px 9px', borderBottom: '1px solid #202020', flexShrink: 0, letterSpacing: 1, textTransform: 'uppercase' },
@@ -1337,7 +1316,4 @@ const styles: Record<string, React.CSSProperties> = {
   kbPresetBtn:       { background: '#1a1a24', border: '1px solid #2e2e3e', color: '#aaa', padding: '5px 9px', borderRadius: 4, cursor: 'pointer', fontSize: 11 },
   kbPresetBtnActive: { background: '#2d1560', border: '1px solid #7040e0', color: '#c0a0ff' },
   kbGroupLabel:{ fontSize: 11, color: '#888', fontWeight: 700, letterSpacing: 0.8, paddingBottom: 3, marginTop: 4 },
-  overlayRow:  { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 14px', cursor: 'pointer', borderRadius: 4, margin: '2px 4px' },
-  overlayText: { fontSize: 12, color: '#ccc' },
-  smallBtn:    { background: 'none', border: 'none', color: '#888', cursor: 'pointer', fontSize: 15 },
 }
