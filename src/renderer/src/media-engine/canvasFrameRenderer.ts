@@ -112,6 +112,8 @@ function drawClipContent(
 type DrawCtx = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D
 type Point2D = { x: number; y: number }
 
+const PROJECTED_TRIANGLE_OVERLAP_PX = 0.75
+
 function has3DRotation(tr: Transform): boolean {
   return Math.abs(tr.pitch) > 0.001 || Math.abs(tr.yaw) > 0.001
 }
@@ -179,16 +181,47 @@ function drawAffineTriangle(
   const e = (d0.x * (sx1 * sy2 - sx2 * sy1) + d1.x * (sx2 * sy0 - sx0 * sy2) + d2.x * (sx0 * sy1 - sx1 * sy0)) / denom
   const f = (d0.y * (sx1 * sy2 - sx2 * sy1) + d1.y * (sx2 * sy0 - sx0 * sy2) + d2.y * (sx0 * sy1 - sx1 * sy0)) / denom
 
+  const c0 = expandTrianglePoint(d0, d1, d2, d0, PROJECTED_TRIANGLE_OVERLAP_PX)
+  const c1 = expandTrianglePoint(d0, d1, d2, d1, PROJECTED_TRIANGLE_OVERLAP_PX)
+  const c2 = expandTrianglePoint(d0, d1, d2, d2, PROJECTED_TRIANGLE_OVERLAP_PX)
+
   ctx.save()
   ctx.beginPath()
-  ctx.moveTo(d0.x, d0.y)
-  ctx.lineTo(d1.x, d1.y)
-  ctx.lineTo(d2.x, d2.y)
+  ctx.moveTo(c0.x, c0.y)
+  ctx.lineTo(c1.x, c1.y)
+  ctx.lineTo(c2.x, c2.y)
   ctx.closePath()
   ctx.clip()
   ctx.transform(a, b, c, d, e, f)
   ctx.drawImage(image, 0, 0)
   ctx.restore()
+}
+
+function expandTrianglePoint(d0: Point2D, d1: Point2D, d2: Point2D, point: Point2D, amount: number): Point2D {
+  const cx = (d0.x + d1.x + d2.x) / 3
+  const cy = (d0.y + d1.y + d2.y) / 3
+  const dx = point.x - cx
+  const dy = point.y - cy
+  const len = Math.hypot(dx, dy)
+  if (len < 0.0001) return point
+
+  return {
+    x: point.x + dx / len * amount,
+    y: point.y + dy / len * amount,
+  }
+}
+
+function clipProjectedPlaneBounds(ctx: DrawCtx, grid: Point2D[][], steps: number): void {
+  ctx.beginPath()
+  ctx.moveTo(grid[0][0].x, grid[0][0].y)
+
+  for (let col = 1; col <= steps; col++) ctx.lineTo(grid[0][col].x, grid[0][col].y)
+  for (let row = 1; row <= steps; row++) ctx.lineTo(grid[row][steps].x, grid[row][steps].y)
+  for (let col = steps - 1; col >= 0; col--) ctx.lineTo(grid[steps][col].x, grid[steps][col].y)
+  for (let row = steps - 1; row >= 0; row--) ctx.lineTo(grid[row][0].x, grid[row][0].y)
+
+  ctx.closePath()
+  ctx.clip()
 }
 
 function drawProjectedPlane(ctx: DrawCtx, image: CanvasImageSource, W: number, H: number, tr: Transform) {
@@ -205,6 +238,9 @@ function drawProjectedPlane(ctx: DrawCtx, image: CanvasImageSource, W: number, H
     }
   }
 
+  ctx.save()
+  clipProjectedPlaneBounds(ctx, grid, steps)
+
   for (let row = 0; row < steps; row++) {
     const sy0 = H * row / steps
     const sy1 = H * (row + 1) / steps
@@ -220,6 +256,8 @@ function drawProjectedPlane(ctx: DrawCtx, image: CanvasImageSource, W: number, H
       drawAffineTriangle(ctx, image, sx0, sy0, sx1, sy1, sx0, sy1, p00, p11, p01)
     }
   }
+
+  ctx.restore()
 }
 
 function createClipPlane(
