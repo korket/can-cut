@@ -1217,10 +1217,6 @@ function TextProps({ overlay, update }: {
         <input type="checkbox" checked={overlay.italic} onChange={e => update({ italic: e.target.checked })} />
       </div>
 
-      <label style={styles.label}>Position X</label>
-      <input type="number" value={overlay.x} onFocus={selectOnFocus} onChange={e => update({ x: +e.target.value })} style={styles.input} />
-      <label style={styles.label}>Position Y</label>
-      <input type="number" value={overlay.y} onFocus={selectOnFocus} onChange={e => update({ y: +e.target.value })} style={styles.input} />
     </div>
   )
 }
