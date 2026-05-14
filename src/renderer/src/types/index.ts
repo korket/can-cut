@@ -164,6 +164,10 @@ export interface TextOverlay {
   endTime: number    // ms on timeline
   bold: boolean
   italic: boolean
+  transform?: Transform
+  effects?: Effects
+  animation?: Animation
+  keyframeTracks?: KeyframeTrack[]
 }
 
 export type Tool = 'select' | 'text'

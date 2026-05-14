@@ -9,7 +9,7 @@ import { createPreviewEngine, type PreviewEngine } from '../media-engine/preview
 import { useEditorStore } from '../store/useEditorStore'
 import { useShortcutsStore, matchesShortcut } from '../store/useShortcutsStore'
 import type { TextOverlay, TimelineItem, MediaClip, Transform } from '../types'
-import { DEFAULT_TRANSFORM } from '../types'
+import { DEFAULT_ANIMATION, DEFAULT_EFFECTS, DEFAULT_TRANSFORM } from '../types'
 import { formatTimecode, snapToFrame, frameDurationMs } from '../utils/frame'
 import { nanoid } from '../utils/nanoid'
 
@@ -148,6 +148,9 @@ export default function PreviewPlayer() {
       endTime: currentTime + 3000,
       bold: false,
       italic: false,
+      transform: { ...DEFAULT_TRANSFORM },
+      effects: { ...DEFAULT_EFFECTS },
+      animation: { ...DEFAULT_ANIMATION },
     })
     setSelectedId(id)
   }
@@ -384,10 +387,13 @@ function TextOverlayHandle({ overlay, viewportEl, onUpdate }: {
   viewportEl: HTMLDivElement | null
   onUpdate: (changes: Partial<TextOverlay>) => void
 }) {
+  const transform = { ...DEFAULT_TRANSFORM, ...overlay.transform }
   const textLines = overlay.text.split('\n')
   const longestLine = textLines.reduce((max, line) => Math.max(max, line.length), 1)
-  const boxWidth = Math.max(80, longestLine * overlay.fontSize * 0.58)
-  const boxHeight = Math.max(overlay.fontSize * 1.25, textLines.length * overlay.fontSize * 1.25)
+  const boxWidth = Math.max(80, longestLine * overlay.fontSize * 0.58) * Math.max(0.01, Math.abs(transform.scaleX))
+  const boxHeight = Math.max(overlay.fontSize * 1.25, textLines.length * overlay.fontSize * 1.25) * Math.max(0.01, Math.abs(transform.scaleY))
+  const displayX = overlay.x + transform.posX / 100 * PREVIEW_W
+  const displayY = overlay.y + transform.posY / 100 * PREVIEW_H
 
   function startMove(e: React.MouseEvent) {
     const viewport = viewportEl?.getBoundingClientRect()
@@ -419,10 +425,12 @@ function TextOverlayHandle({ overlay, viewportEl, onUpdate }: {
       data-text-handle
       style={{
         position: 'absolute',
-        left: `${overlay.x / PREVIEW_W * 100}%`,
-        top: `${overlay.y / PREVIEW_H * 100}%`,
+        left: `${displayX / PREVIEW_W * 100}%`,
+        top: `${displayY / PREVIEW_H * 100}%`,
         width: `${boxWidth / PREVIEW_W * 100}%`,
         height: `${boxHeight / PREVIEW_H * 100}%`,
+        transform: `rotate(${transform.rotation}deg)`,
+        transformOrigin: `${transform.anchorX * 100}% ${transform.anchorY * 100}%`,
         minWidth: 28,
         minHeight: 18,
         border: '1.5px solid rgba(139,92,246,0.95)',

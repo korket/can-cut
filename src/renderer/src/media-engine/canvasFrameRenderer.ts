@@ -1,4 +1,4 @@
-import { evaluateClipAtTime, evaluateTransition } from '../editor-core/evaluation'
+import { evaluateClipAtTime, evaluateTextOverlayAtTime, evaluateTransition } from '../editor-core/evaluation'
 import { getClipSourceTimeMs, getItemDuration, getItemEnd, isItemActiveAt } from '../editor-core/timeline'
 import type { TimelineItem, MediaClip, TextOverlay, Transform, Effects } from '../types'
 import type { LoadedCanvasMedia } from './mediaElementLoader'
@@ -386,11 +386,11 @@ function isTextOverlayActiveAt(overlay: TextOverlay, timeMs: number): boolean {
   return timeMs >= overlay.startTime && timeMs < overlay.endTime
 }
 
-function drawTextOverlay(ctx: CanvasRenderingContext2D, overlay: TextOverlay): void {
-  ctx.save()
-  ctx.setTransform(1, 0, 0, 1, 0, 0)
-  ctx.filter = 'none'
-  ctx.globalAlpha = 1
+function drawRawText(
+  ctx: DrawCtx,
+  overlay: TextOverlay,
+  useBaseShadow: boolean
+): void {
   ctx.font = [
     overlay.italic ? 'italic' : '',
     overlay.bold   ? 'bold'   : '',
@@ -399,15 +399,144 @@ function drawTextOverlay(ctx: CanvasRenderingContext2D, overlay: TextOverlay): v
   ].filter(Boolean).join(' ')
   ctx.textBaseline = 'top'
   ctx.fillStyle = overlay.color
-  ctx.shadowColor   = 'rgba(0,0,0,0.8)'
-  ctx.shadowBlur    = 4
-  ctx.shadowOffsetX = 0
-  ctx.shadowOffsetY = 1
+  if (useBaseShadow) {
+    ctx.shadowColor   = 'rgba(0,0,0,0.8)'
+    ctx.shadowBlur    = 4
+    ctx.shadowOffsetX = 0
+    ctx.shadowOffsetY = 1
+  }
 
   const lineHeight = overlay.fontSize * 1.2
   for (const [index, line] of overlay.text.split('\n').entries()) {
     ctx.fillText(line, overlay.x, overlay.y + index * lineHeight)
   }
+}
+
+function createTextPlane(
+  W: number,
+  H: number,
+  tr: Transform,
+  ef: Effects,
+  animBlur: number,
+  overlay: TextOverlay,
+  useBaseShadow: boolean
+): OffscreenCanvas {
+  const off = new OffscreenCanvas(W, H)
+  const offCtx = off.getContext('2d')!
+  const fs = effectsFilter(ef)
+  const blurPart = animBlur > 0 ? `blur(${animBlur.toFixed(1)}px)` : ''
+  const combinedFilter = [blurPart, fs].filter(Boolean).join(' ')
+  if (combinedFilter) offCtx.filter = combinedFilter
+
+  if (tr.cropL > 0 || tr.cropR > 0 || tr.cropT > 0 || tr.cropB > 0) {
+    offCtx.beginPath()
+    offCtx.rect(
+      tr.cropL / 100 * W, tr.cropT / 100 * H,
+      W * (1 - tr.cropL / 100 - tr.cropR / 100),
+      H * (1 - tr.cropT / 100 - tr.cropB / 100)
+    )
+    offCtx.clip()
+  }
+
+  drawRawText(offCtx, overlay, useBaseShadow)
+  return off
+}
+
+function drawTextContent(
+  ctx: DrawCtx,
+  W: number,
+  H: number,
+  tr: Transform,
+  ef: Effects,
+  animBlur: number,
+  overlay: TextOverlay,
+  useBaseShadow: boolean
+): void {
+  if (has3DRotation(tr)) {
+    const plane = createTextPlane(W, H, tr, ef, animBlur, overlay, useBaseShadow)
+    drawProjectedPlane(ctx, plane, W, H, tr)
+    return
+  }
+
+  const fs = effectsFilter(ef)
+  const blurPart = animBlur > 0 ? `blur(${animBlur.toFixed(1)}px)` : ''
+  const combinedFilter = [blurPart, fs].filter(Boolean).join(' ')
+  if (combinedFilter) ctx.filter = combinedFilter
+
+  const ax = tr.anchorX * W
+  const ay = tr.anchorY * H
+  ctx.translate(ax + tr.posX / 100 * W, ay + tr.posY / 100 * H)
+  ctx.rotate(tr.rotation * Math.PI / 180)
+  ctx.scale(tr.scaleX * (tr.flipH ? -1 : 1), tr.scaleY * (tr.flipV ? -1 : 1))
+  ctx.translate(-ax, -ay)
+
+  if (tr.cropL > 0 || tr.cropR > 0 || tr.cropT > 0 || tr.cropB > 0) {
+    ctx.beginPath()
+    ctx.rect(
+      tr.cropL / 100 * W, tr.cropT / 100 * H,
+      W * (1 - tr.cropL / 100 - tr.cropR / 100),
+      H * (1 - tr.cropT / 100 - tr.cropB / 100)
+    )
+    ctx.clip()
+  }
+
+  drawRawText(ctx, overlay, useBaseShadow)
+}
+
+function drawTextOverlay(ctx: CanvasRenderingContext2D, W: number, H: number, timeMs: number, overlay: TextOverlay): void {
+  const clipTime = timeMs - overlay.startTime
+  const { transform: tr, effects: ef, animation } = evaluateTextOverlayAtTime(overlay, clipTime)
+
+  const backdropBlur     = ef.backdropBlur     ?? 0
+  const backdropBlurFade = ef.backdropBlurFade ?? 600
+  if (backdropBlur > 0) {
+    const clipDur = Math.max(1, overlay.endTime - overlay.startTime)
+    const bgOpacity = backdropBlurFade > 0
+      ? Math.min(clipTime / backdropBlurFade, (clipDur - clipTime) / backdropBlurFade, 1)
+      : 1
+    if (bgOpacity > 0) {
+      const off = new OffscreenCanvas(W, H)
+      off.getContext('2d')!.drawImage(ctx.canvas, 0, 0)
+      ctx.save()
+      ctx.filter = `blur(${backdropBlur}px)`
+      ctx.globalAlpha = bgOpacity
+      ctx.drawImage(off, 0, 0)
+      ctx.restore()
+    }
+  }
+
+  const animTx = animation.translateXPct / 100 * W
+  const animTy = animation.translateYPct / 100 * H
+  const hasShadow = ef.shadowOpacity > 0
+  const useBaseShadow = !hasShadow
+
+  if (hasShadow) {
+    const off = new OffscreenCanvas(W, H)
+    const offCtx = off.getContext('2d')!
+    offCtx.save()
+    drawTextContent(offCtx, W, H, tr, ef, animation.blurPx, overlay, useBaseShadow)
+    offCtx.restore()
+
+    ctx.save()
+    ctx.translate(W / 2 + animTx, H / 2 + animTy)
+    ctx.scale(animation.scale, animation.scale)
+    ctx.translate(-W / 2, -H / 2)
+    ctx.globalAlpha = animation.opacity
+    ctx.shadowColor    = hexToRgba(ef.shadowColor ?? '#000000', ef.shadowOpacity / 100)
+    ctx.shadowBlur     = ef.shadowBlur
+    ctx.shadowOffsetX  = ef.shadowX
+    ctx.shadowOffsetY  = ef.shadowY
+    ctx.drawImage(off, 0, 0)
+    ctx.restore()
+    return
+  }
+
+  ctx.save()
+  ctx.translate(W / 2 + animTx, H / 2 + animTy)
+  ctx.scale(animation.scale, animation.scale)
+  ctx.translate(-W / 2, -H / 2)
+  ctx.globalAlpha = animation.opacity
+  drawTextContent(ctx, W, H, tr, ef, animation.blurPx, overlay, useBaseShadow)
   ctx.restore()
 }
 
@@ -441,7 +570,7 @@ export async function renderCanvasFrame(
 
   for (const visualLayer of visualLayers) {
     if (visualLayer.kind === 'text') {
-      drawTextOverlay(ctx, visualLayer.overlay)
+      drawTextOverlay(ctx, W, H, timeMs, visualLayer.overlay)
       continue
     }
 

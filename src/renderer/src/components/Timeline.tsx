@@ -1036,6 +1036,35 @@ function TrackRow({ trackIdx, trackHeight, clips, timelineItems, textOverlays, m
               <span style={styles.clipLabel}>{overlay.text || 'Text'}</span>
               <div style={styles.resizeR} onMouseDown={e => onTextResizeMouseDown(e, overlay.id, 'right')} />
               <button style={styles.clipDel} onMouseDown={e => e.stopPropagation()} onClick={() => removeTextOverlay(overlay.id)}>×</button>
+              {overlay.keyframeTracks && overlay.keyframeTracks.length > 0 && (() => {
+                const clipDur = Math.max(1, overlay.endTime - overlay.startTime)
+                const times = allKeyframeTimes(overlay.keyframeTracks)
+                return (
+                  <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 10, pointerEvents: 'none' }}>
+                    <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 2, background: 'rgba(255,204,0,0.35)' }} />
+                    {isSelected && times.map(t => (
+                      <div
+                        key={t}
+                        style={{
+                          position: 'absolute',
+                          left: `${Math.min(100, (t / clipDur) * 100)}%`,
+                          top: '50%',
+                          transform: 'translate(-50%, -50%) rotate(45deg)',
+                          width: 7, height: 7,
+                          background: '#ffcc00',
+                          boxShadow: '0 0 3px rgba(0,0,0,0.6)',
+                          cursor: 'pointer',
+                          pointerEvents: 'all',
+                        }}
+                        onMouseDown={ev => {
+                          ev.stopPropagation()
+                          useEditorStore.getState().setCurrentTime(overlay.startTime + t)
+                        }}
+                      />
+                    ))}
+                  </div>
+                )
+              })()}
             </div>
           )
         })}

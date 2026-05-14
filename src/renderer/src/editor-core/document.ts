@@ -1,4 +1,5 @@
 import type { MediaClip, MediaFolder, TextOverlay, TimelineItem } from '../types'
+import { DEFAULT_ANIMATION, DEFAULT_EFFECTS, DEFAULT_TRANSFORM } from '../types'
 
 export const PROJECT_SCHEMA_VERSION = 1
 
@@ -86,6 +87,10 @@ function normalizeTextOverlays(overlays: unknown, videoTrackCount: number): Text
       endTime: Number.isFinite(value.endTime) ? Number(value.endTime) : 3000,
       bold: Boolean(value.bold),
       italic: Boolean(value.italic),
+      transform: { ...DEFAULT_TRANSFORM, ...value.transform },
+      effects: { ...DEFAULT_EFFECTS, ...value.effects },
+      animation: { ...DEFAULT_ANIMATION, ...value.animation },
+      keyframeTracks: Array.isArray(value.keyframeTracks) ? value.keyframeTracks : undefined,
     }
   })
 }

@@ -26,10 +26,21 @@ export default function PropertiesPanel() {
     Math.abs((i.startTime + (i.trimEnd - i.trimStart)) - selectedItem.startTime) < 500
   ) : null
 
-  const clipTime = selectedItem ? Math.max(0, currentTime - selectedItem.startTime) : 0
-  const kfTracks = selectedItem?.keyframeTracks ?? []
-  const addKf    = (property: string, value: number) => addKeyframe(selectedItem!.id, property, clipTime, value)
-  const removeKf = (property: string) => removeKeyframe(selectedItem!.id, property, clipTime)
+  const isTextSelection = !!selectedOverlay
+  const clipTime = selectedItem
+    ? Math.max(0, currentTime - selectedItem.startTime)
+    : selectedOverlay
+      ? Math.max(0, currentTime - selectedOverlay.startTime)
+      : 0
+  const selectedDuration = selectedItem
+    ? selectedItem.trimEnd - selectedItem.trimStart
+    : selectedOverlay
+      ? selectedOverlay.endTime - selectedOverlay.startTime
+      : 0
+  const kfTracks = selectedItem?.keyframeTracks ?? selectedOverlay?.keyframeTracks ?? []
+  const selectedEditableId = selectedItem?.id ?? selectedOverlay?.id ?? null
+  const addKf    = (property: string, value: number) => { if (selectedEditableId) addKeyframe(selectedEditableId, property, clipTime, value) }
+  const removeKf = (property: string) => { if (selectedEditableId) removeKeyframe(selectedEditableId, property, clipTime) }
 
   function addText() {
     const id = nanoid()
@@ -39,6 +50,9 @@ export default function PropertiesPanel() {
       trackIndex: Math.max(0, videoTrackCount - 1),
       startTime: currentTime, endTime: currentTime + 3000,
       bold: false, italic: false,
+      transform: { ...DEFAULT_TRANSFORM },
+      effects: { ...DEFAULT_EFFECTS },
+      animation: { ...DEFAULT_ANIMATION },
     })
     setSelectedId(id)
   }
@@ -47,7 +61,15 @@ export default function PropertiesPanel() {
 
   // Build tab list based on selected clip type
   const tabs: { id: string; label: string }[] = []
-  if (selectedItem && selectedClip) {
+  if (selectedOverlay) {
+    tabs.push(
+      { id: 'text',       label: 'Text'       },
+      { id: 'transform',  label: 'Transform'  },
+      { id: 'animation',  label: 'Animation'  },
+      { id: 'effects',    label: 'FX'         },
+      { id: 'clip',       label: 'Clip'       },
+    )
+  } else if (selectedItem && selectedClip) {
     if (selectedClip.type !== 'image') tabs.push({ id: 'audio',      label: 'Audio'      })
     if (selectedClip.type !== 'audio') {
       tabs.push(
@@ -63,10 +85,27 @@ export default function PropertiesPanel() {
   // Fall back to first available tab if current tab doesn't exist for this clip
   const tab = tabs.find(t => t.id === activeTab) ? activeTab : (tabs[0]?.id ?? '')
 
-  const baseT = selectedItem ? { ...DEFAULT_TRANSFORM, ...selectedItem.transform } : DEFAULT_TRANSFORM
-  const baseE = selectedItem ? { ...DEFAULT_EFFECTS,   ...selectedItem.effects   } : DEFAULT_EFFECTS
+  const baseT = selectedItem
+    ? { ...DEFAULT_TRANSFORM, ...selectedItem.transform }
+    : selectedOverlay
+      ? { ...DEFAULT_TRANSFORM, ...selectedOverlay.transform }
+      : DEFAULT_TRANSFORM
+  const baseE = selectedItem
+    ? { ...DEFAULT_EFFECTS, ...selectedItem.effects }
+    : selectedOverlay
+      ? { ...DEFAULT_EFFECTS, ...selectedOverlay.effects }
+      : DEFAULT_EFFECTS
   const effT  = kfTracks.length > 0 ? applyKeyframesToTransform(kfTracks, baseT, clipTime) : baseT
   const effE  = kfTracks.length > 0 ? applyKeyframesToEffects(kfTracks, baseE, clipTime)   : baseE
+  const updateTextTransform = (changes: Partial<Transform>) => {
+    if (selectedOverlay) updateTextOverlay(selectedOverlay.id, { transform: { ...DEFAULT_TRANSFORM, ...selectedOverlay.transform, ...changes } })
+  }
+  const updateTextEffects = (changes: Partial<Effects>) => {
+    if (selectedOverlay) updateTextOverlay(selectedOverlay.id, { effects: { ...DEFAULT_EFFECTS, ...selectedOverlay.effects, ...changes } })
+  }
+  const updateTextAnimation = (changes: Partial<Animation>) => {
+    if (selectedOverlay) updateTextOverlay(selectedOverlay.id, { animation: { ...DEFAULT_ANIMATION, ...selectedOverlay.animation, ...changes } })
+  }
 
   return (
     <div style={styles.panel}>
@@ -76,14 +115,6 @@ export default function PropertiesPanel() {
         <div style={{ padding: '10px 14px', flexShrink: 0 }}>
           <button style={styles.addTextBtn} onClick={addText}>+ Add Text</button>
         </div>
-      )}
-
-      {selectedOverlay && (
-        <TextProps
-          overlay={selectedOverlay}
-          update={c => updateTextOverlay(selectedOverlay.id, c)}
-          onDelete={() => removeTextOverlay(selectedOverlay.id)}
-        />
       )}
 
       {tabs.length > 0 && (
@@ -103,6 +134,13 @@ export default function PropertiesPanel() {
 
           {/* Tab content — scrollable */}
           <div style={styles.tabContent}>
+            {tab === 'text' && selectedOverlay && (
+              <TextProps
+                overlay={selectedOverlay}
+                update={c => updateTextOverlay(selectedOverlay.id, c)}
+              />
+            )}
+
             {tab === 'audio' && selectedItem && (
               <AudioSection
                 volume={selectedItem.volume ?? 100}
@@ -111,30 +149,32 @@ export default function PropertiesPanel() {
               />
             )}
 
-            {tab === 'transform' && selectedItem && (
+            {tab === 'transform' && (selectedItem || selectedOverlay) && (
               <>
                 <TransformSection
                   transform={baseT} effective={effT}
-                  update={c => updateTransform(selectedItem.id, c)}
+                  update={c => selectedItem ? updateTransform(selectedItem.id, c) : updateTextTransform(c)}
                   clipTime={clipTime} kfTracks={kfTracks}
                   addKf={addKf} removeKf={removeKf}
                   flat
                 />
-                <div style={{ borderTop: '1px solid #222' }}>
-                  <CropSection
-                    transform={baseT}
-                    update={c => updateTransform(selectedItem.id, c)}
-                  />
-                </div>
+                {selectedItem && (
+                  <div style={{ borderTop: '1px solid #222' }}>
+                    <CropSection
+                      transform={baseT}
+                      update={c => updateTransform(selectedItem.id, c)}
+                    />
+                  </div>
+                )}
               </>
             )}
 
-            {tab === 'animation' && selectedItem && (
+            {tab === 'animation' && (selectedItem || selectedOverlay) && (
               <>
                 <AnimationSection
-                  animation={{ ...DEFAULT_ANIMATION, ...selectedItem.animation }}
-                  clipDuration={selectedItem.trimEnd - selectedItem.trimStart}
-                  update={c => updateAnimation(selectedItem.id, c)}
+                  animation={{ ...DEFAULT_ANIMATION, ...(selectedItem ? selectedItem.animation : selectedOverlay?.animation) }}
+                  clipDuration={selectedDuration}
+                  update={c => selectedItem ? updateAnimation(selectedItem.id, c) : updateTextAnimation(c)}
                   flat
                 />
                 {selectedClip && selectedClip.type !== 'audio' && (
@@ -147,10 +187,10 @@ export default function PropertiesPanel() {
               </>
             )}
 
-            {tab === 'effects' && selectedItem && (
+            {tab === 'effects' && (selectedItem || selectedOverlay) && (
               <EffectsSection
                 effects={baseE} effective={effE}
-                update={c => updateEffects(selectedItem.id, c)}
+                update={c => selectedItem ? updateEffects(selectedItem.id, c) : updateTextEffects(c)}
                 clipTime={clipTime} kfTracks={kfTracks}
                 addKf={addKf} removeKf={removeKf}
                 flat
@@ -162,6 +202,14 @@ export default function PropertiesPanel() {
                 transition={{ ...DEFAULT_TRANSITION, ...selectedItem.transitionIn }}
                 update={c => updateTransition(selectedItem.id, c)}
                 flat
+              />
+            )}
+
+            {tab === 'clip' && selectedOverlay && (
+              <TextClipProps
+                overlay={selectedOverlay}
+                update={c => updateTextOverlay(selectedOverlay.id, c)}
+                onDelete={() => removeTextOverlay(selectedOverlay.id)}
               />
             )}
 
@@ -182,13 +230,15 @@ export default function PropertiesPanel() {
 
       {textOverlays.length > 0 && <TextList />}
 
-      <DefaultTransformSection
-        enabled={defaultTransformEnabled}
-        transform={defaultTransform}
-        onToggle={() => setDefaultTransformEnabled(!defaultTransformEnabled)}
-        onCapture={canCapture ? () => captureDefaultTransform({ ...DEFAULT_TRANSFORM, ...selectedItem!.transform }) : undefined}
-        update={setDefaultTransform}
-      />
+      {!isTextSelection && (
+        <DefaultTransformSection
+          enabled={defaultTransformEnabled}
+          transform={defaultTransform}
+          onToggle={() => setDefaultTransformEnabled(!defaultTransformEnabled)}
+          onCapture={canCapture ? () => captureDefaultTransform({ ...DEFAULT_TRANSFORM, ...selectedItem!.transform }) : undefined}
+          update={setDefaultTransform}
+        />
+      )}
     </div>
   )
 }
@@ -969,16 +1019,18 @@ function AnimationSection({ animation: a, clipDuration, update, flat }: {
 }
 
 // ── Text overlay properties ───────────────────────────────────────────────────
-function TextProps({ overlay, update, onDelete }: {
+function TextProps({ overlay, update }: {
   overlay: TextOverlay
   update: (c: Partial<TextOverlay>) => void
-  onDelete: () => void
 }) {
   return (
     <div style={styles.section}>
       <div style={styles.sectionTitle}>Text</div>
       <label style={styles.label}>Content</label>
       <textarea style={styles.textarea} value={overlay.text} onChange={e => update({ text: e.target.value })} rows={2} />
+
+      <label style={styles.label}>Font Family</label>
+      <input value={overlay.fontFamily} onChange={e => update({ fontFamily: e.target.value })} style={styles.input} />
 
       <label style={styles.label}>Font Size</label>
       <div style={styles.row}>
@@ -1000,16 +1052,27 @@ function TextProps({ overlay, update, onDelete }: {
       <input type="number" value={overlay.x} onChange={e => update({ x: +e.target.value })} style={styles.input} />
       <label style={styles.label}>Position Y</label>
       <input type="number" value={overlay.y} onChange={e => update({ y: +e.target.value })} style={styles.input} />
+    </div>
+  )
+}
 
+function TextClipProps({ overlay, update, onDelete }: {
+  overlay: TextOverlay
+  update: (c: Partial<TextOverlay>) => void
+  onDelete: () => void
+}) {
+  return (
+    <div style={styles.section}>
+      <div style={styles.sectionTitle}>Title Clip</div>
       <label style={styles.label}>Video Track</label>
       <input type="number" min={1} value={overlay.trackIndex + 1} onChange={e => update({ trackIndex: Math.max(0, +e.target.value - 1) })} style={styles.input} />
 
       <label style={styles.label}>Start (ms)</label>
-      <input type="number" value={overlay.startTime} onChange={e => update({ startTime: +e.target.value })} style={styles.input} />
+      <input type="number" value={overlay.startTime} onChange={e => update({ startTime: Math.max(0, Math.min(+e.target.value, overlay.endTime - 1)) })} style={styles.input} />
       <label style={styles.label}>End (ms)</label>
-      <input type="number" value={overlay.endTime} onChange={e => update({ endTime: +e.target.value })} style={styles.input} />
+      <input type="number" value={overlay.endTime} onChange={e => update({ endTime: Math.max(overlay.startTime + 1, +e.target.value) })} style={styles.input} />
 
-      <button style={styles.deleteBtn} onClick={onDelete}>Delete Text</button>
+      <button style={styles.deleteBtn} onClick={onDelete}>Delete Title</button>
     </div>
   )
 }

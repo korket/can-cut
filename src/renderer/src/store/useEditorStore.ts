@@ -111,6 +111,46 @@ function captureEditableState(state: EditorStore): EditableDocumentState {
   }
 }
 
+type KeyframeTarget = { id: string; keyframeTracks?: KeyframeTrack[] }
+
+function addKeyframeToTarget<T extends KeyframeTarget>(
+  target: T,
+  property: string,
+  time: number,
+  value: number
+): T {
+  const tracks: KeyframeTrack[] = target.keyframeTracks ?? []
+  const tIdx = tracks.findIndex(t => t.property === property)
+  const newKf: Keyframe = { time, value, easing: 'linear' }
+
+  if (tIdx === -1) {
+    return { ...target, keyframeTracks: [...tracks, { property, keyframes: [newKf] }] }
+  }
+
+  const track = tracks[tIdx]
+  const eIdx = track.keyframes.findIndex(kf => Math.abs(kf.time - time) <= KF_SNAP)
+  const newKfs = eIdx !== -1
+    ? track.keyframes.map((kf, k) => k === eIdx ? { ...kf, value } : kf)
+    : [...track.keyframes, newKf].sort((a, b) => a.time - b.time)
+
+  return { ...target, keyframeTracks: tracks.map((t, k) => k === tIdx ? { ...t, keyframes: newKfs } : t) }
+}
+
+function removeKeyframeFromTarget<T extends KeyframeTarget>(
+  target: T,
+  property: string,
+  time: number
+): T {
+  const tracks = (target.keyframeTracks ?? [])
+    .map(t => t.property !== property ? t : {
+      ...t,
+      keyframes: t.keyframes.filter(kf => Math.abs(kf.time - time) > KF_SNAP)
+    })
+    .filter(t => t.keyframes.length > 0)
+
+  return { ...target, keyframeTracks: tracks.length > 0 ? tracks : undefined }
+}
+
 export const useEditorStore = create<EditorStore>((set, get) => {
   function commit(label: string, producer: (state: EditorStore) => EditablePatch) {
     const before = captureEditableState(get())
@@ -171,36 +211,32 @@ export const useEditorStore = create<EditorStore>((set, get) => {
         )
       })),
     addKeyframe: (itemId, property, time, value) =>
-      commit('Add keyframe', (s) => ({
-        timelineItems: s.timelineItems.map((i) => {
-          if (i.id !== itemId) return i
-          const tracks: KeyframeTrack[] = i.keyframeTracks ?? []
-          const tIdx = tracks.findIndex(t => t.property === property)
-          const newKf: Keyframe = { time, value, easing: 'linear' }
-          if (tIdx === -1) {
-            return { ...i, keyframeTracks: [...tracks, { property, keyframes: [newKf] }] }
-          }
-          const track = tracks[tIdx]
-          const eIdx = track.keyframes.findIndex(kf => Math.abs(kf.time - time) <= KF_SNAP)
-          const newKfs = eIdx !== -1
-            ? track.keyframes.map((kf, k) => k === eIdx ? { ...kf, value } : kf)
-            : [...track.keyframes, newKf].sort((a, b) => a.time - b.time)
-          return { ...i, keyframeTracks: tracks.map((t, k) => k === tIdx ? { ...t, keyframes: newKfs } : t) }
-        })
-      })),
+      commit('Add keyframe', (s) => {
+        const isTimelineItem = s.timelineItems.some((i) => i.id === itemId)
+        const isTextOverlay = s.textOverlays.some((o) => o.id === itemId)
+        return {
+          timelineItems: isTimelineItem
+            ? s.timelineItems.map((i) => i.id === itemId ? addKeyframeToTarget(i, property, time, value) : i)
+            : s.timelineItems,
+          textOverlays: !isTimelineItem && isTextOverlay
+            ? s.textOverlays.map((o) => o.id === itemId ? addKeyframeToTarget(o, property, time, value) : o)
+            : s.textOverlays,
+        }
+      }),
 
     removeKeyframe: (itemId, property, time) =>
-      commit('Remove keyframe', (s) => ({
-        timelineItems: s.timelineItems.map((i) => {
-          if (i.id !== itemId) return i
-          const tracks = (i.keyframeTracks ?? [])
-            .map(t => t.property !== property ? t : {
-              ...t, keyframes: t.keyframes.filter(kf => Math.abs(kf.time - time) > KF_SNAP)
-            })
-            .filter(t => t.keyframes.length > 0)
-          return { ...i, keyframeTracks: tracks.length > 0 ? tracks : undefined }
-        })
-      })),
+      commit('Remove keyframe', (s) => {
+        const isTimelineItem = s.timelineItems.some((i) => i.id === itemId)
+        const isTextOverlay = s.textOverlays.some((o) => o.id === itemId)
+        return {
+          timelineItems: isTimelineItem
+            ? s.timelineItems.map((i) => i.id === itemId ? removeKeyframeFromTarget(i, property, time) : i)
+            : s.timelineItems,
+          textOverlays: !isTimelineItem && isTextOverlay
+            ? s.textOverlays.map((o) => o.id === itemId ? removeKeyframeFromTarget(o, property, time) : o)
+            : s.textOverlays,
+        }
+      }),
 
     removeTimelineItem: (id) =>
       commit('Remove timeline item', (s) => ({ timelineItems: s.timelineItems.filter((i) => i.id !== id) })),

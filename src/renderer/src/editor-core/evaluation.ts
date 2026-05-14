@@ -1,4 +1,4 @@
-import type { Animation, Effects, KenBurns, TimelineItem, Transform, Transition } from '../types'
+import type { Animation, Effects, KenBurns, TextOverlay, TimelineItem, Transform, Transition } from '../types'
 import { DEFAULT_ANIMATION, DEFAULT_EFFECTS, DEFAULT_TRANSFORM } from '../types'
 import { applyKeyframesToEffects, applyKeyframesToTransform } from '../utils/keyframes'
 import { getItemDuration, getItemEnd } from './timeline'
@@ -122,6 +122,25 @@ export function evaluateClipAtTime(item: TimelineItem, clipTime: number): Evalua
     transform,
     effects,
     animation: evaluateAnimation(item.animation, clipTime, clipDuration),
+  }
+}
+
+export function evaluateTextOverlayAtTime(overlay: TextOverlay, clipTime: number): EvaluatedClipState {
+  const clipDuration = Math.max(1, overlay.endTime - overlay.startTime)
+  const keyframeTracks = overlay.keyframeTracks ?? []
+
+  let transform: Transform = { ...DEFAULT_TRANSFORM, ...overlay.transform }
+  let effects: Effects = { ...DEFAULT_EFFECTS, ...overlay.effects }
+
+  if (keyframeTracks.length > 0) {
+    transform = applyKeyframesToTransform(keyframeTracks, transform, clipTime)
+    effects = applyKeyframesToEffects(keyframeTracks, effects, clipTime)
+  }
+
+  return {
+    transform,
+    effects,
+    animation: evaluateAnimation(overlay.animation, clipTime, clipDuration),
   }
 }
 
