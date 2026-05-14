@@ -38,7 +38,7 @@ export default function PreviewPlayer() {
     currentTime, setCurrentTime, isPlaying, setIsPlaying,
     fps, selectedId, updateTransform, updateTimelineItem,
     hoverPreviewClip, tool, addTextOverlay, updateTextOverlay, setSelectedId,
-    videoTrackCount,
+    videoTrackCount, titleFontPreview,
   } = useEditorStore()
 
   const previewEngineRef = useRef<PreviewEngine | null>(null)
@@ -72,9 +72,18 @@ export default function PreviewPlayer() {
     return () => obs.disconnect()
   }, [])
 
+  const previewTextOverlays = useMemo(() => {
+    if (!titleFontPreview) return textOverlays
+    return textOverlays.map(overlay =>
+      overlay.id === titleFontPreview.overlayId
+        ? { ...overlay, fontFamily: titleFontPreview.fontFamily }
+        : overlay
+    )
+  }, [textOverlays, titleFontPreview])
+
   const renderPlan = useMemo(
-    () => createPreviewPlanFromState({ clips, timelineItems, textOverlays, fps }),
-    [clips, timelineItems, textOverlays, fps]
+    () => createPreviewPlanFromState({ clips, timelineItems, textOverlays: previewTextOverlays, fps }),
+    [clips, timelineItems, previewTextOverlays, fps]
   )
   const previewTimelineItems = useMemo(() => getRenderPlanTimelineItems(renderPlan), [renderPlan])
   const previewClips = useMemo(() => getRenderPlanAssets(renderPlan), [renderPlan])

@@ -19,6 +19,11 @@ import { registerHistoryApplier, useHistoryStore } from './useHistoryStore'
 
 const KF_SNAP = 50  // ms
 
+interface TitleFontPreview {
+  overlayId: string
+  fontFamily: string
+}
+
 interface EditorStore {
   // Media bin
   clips: MediaClip[]
@@ -50,6 +55,8 @@ interface EditorStore {
   addTextOverlay: (overlay: TextOverlay) => void
   updateTextOverlay: (id: string, changes: Partial<TextOverlay>) => void
   removeTextOverlay: (id: string) => void
+  titleFontPreview: TitleFontPreview | null
+  setTitleFontPreview: (preview: TitleFontPreview | null) => void
 
   // Playback
   currentTime: number
@@ -255,6 +262,8 @@ export const useEditorStore = create<EditorStore>((set, get) => {
       })),
     removeTextOverlay: (id) =>
       commit('Remove text overlay', (s) => ({ textOverlays: s.textOverlays.filter((o) => o.id !== id) })),
+    titleFontPreview: null,
+    setTitleFontPreview: (preview) => set({ titleFontPreview: preview }),
 
     hoverPreviewClip: null,
     setHoverPreviewClip: (clip) => set({ hoverPreviewClip: clip }),

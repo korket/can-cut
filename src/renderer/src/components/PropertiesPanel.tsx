@@ -1042,11 +1042,16 @@ function TextProps({ overlay, update }: {
   overlay: TextOverlay
   update: (c: Partial<TextOverlay>) => void
 }) {
+  const setTitleFontPreview = useEditorStore(s => s.setTitleFontPreview)
   const fontFamily = overlay.fontFamily || 'sans-serif'
   const [systemFonts, setSystemFonts] = useState(cachedSystemFonts ?? FALLBACK_TITLE_FONTS)
   const [fontQuery, setFontQuery] = useState(fontFamily)
   const [fontMenuOpen, setFontMenuOpen] = useState(false)
   const selectingFontRef = useRef(false)
+
+  useEffect(() => {
+    return () => setTitleFontPreview(null)
+  }, [overlay.id, setTitleFontPreview])
 
   useEffect(() => {
     let cancelled = false
@@ -1074,9 +1079,20 @@ function TextProps({ overlay, update }: {
       setFontQuery(fontFamily)
       return
     }
+    setTitleFontPreview(null)
     update({ fontFamily: family })
     setFontQuery(family)
     setFontMenuOpen(false)
+  }
+
+  function previewFont(next: string) {
+    const family = next.trim()
+    if (!family) return
+    setTitleFontPreview({ overlayId: overlay.id, fontFamily: family })
+  }
+
+  function clearFontPreview() {
+    setTitleFontPreview(null)
   }
 
   return (
@@ -1090,6 +1106,7 @@ function TextProps({ overlay, update }: {
         <input
           value={fontMenuOpen ? fontQuery : fontFamily}
           onFocus={() => {
+            clearFontPreview()
             setFontMenuOpen(true)
             setFontQuery('')
           }}
@@ -1100,6 +1117,7 @@ function TextProps({ overlay, update }: {
                 selectingFontRef.current = false
                 return
               }
+              clearFontPreview()
               if (fontQuery.trim()) applyFont(fontQuery)
               else setFontQuery(fontFamily)
               setFontMenuOpen(false)
@@ -1110,6 +1128,7 @@ function TextProps({ overlay, update }: {
               e.preventDefault()
               applyFont(visibleFonts[0] ?? fontQuery)
             } else if (e.key === 'Escape') {
+              clearFontPreview()
               setFontQuery(fontFamily)
               setFontMenuOpen(false)
             }
@@ -1119,7 +1138,7 @@ function TextProps({ overlay, update }: {
           style={styles.input}
         />
         {fontMenuOpen && (
-          <div style={styles.fontMenu}>
+          <div style={styles.fontMenu} onMouseLeave={clearFontPreview}>
             {(visibleFonts.length > 0 ? visibleFonts : [fontQuery]).map(font => (
               <button
                 key={font}
@@ -1128,6 +1147,8 @@ function TextProps({ overlay, update }: {
                   ...styles.fontOption,
                   ...(font.toLocaleLowerCase() === fontFamily.toLocaleLowerCase() ? styles.fontOptionActive : {}),
                 }}
+                onMouseEnter={() => previewFont(font)}
+                onFocus={() => previewFont(font)}
                 onMouseDown={e => {
                   selectingFontRef.current = true
                   e.preventDefault()
