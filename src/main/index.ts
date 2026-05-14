@@ -6,6 +6,7 @@ import {
   createExportJobService,
   type ExportJobService,
 } from './export/jobService'
+import { createMediaAnalysisService, registerMediaAnalysisIpc } from './mediaAnalysis'
 import { createProjectStore, registerProjectIpc } from './projects'
 
 if (!app.requestSingleInstanceLock()) {
@@ -186,6 +187,7 @@ const exportEngine = createExportEngine({
 })
 
 const projectStore = createProjectStore(() => join(app.getPath('userData'), 'projects'))
+const mediaAnalysis = createMediaAnalysisService(() => join(app.getPath('userData'), 'media-analysis'))
 
 app.whenReady().then(async () => {
   exportJobs = createExportJobService({
@@ -230,4 +232,5 @@ registerExportIpc(ipcMain, {
     : null,
 })
 ipcMain.handle('shell:openPath', (_event, path: string) => shell.openPath(path))
+registerMediaAnalysisIpc(ipcMain, mediaAnalysis)
 registerProjectIpc(ipcMain, projectStore)

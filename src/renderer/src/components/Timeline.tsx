@@ -5,7 +5,7 @@ import type { TransitionType } from '../types'
 import { DEFAULT_TRANSITION, DEFAULT_KEN_BURNS } from '../types'
 import { importAndAddClips } from '../utils/importClip'
 import { nanoid } from '../utils/nanoid'
-import { getWaveform } from '../utils/waveform'
+import { getWaveform, selectWaveformLevel, type WaveformData, type WaveformLevel } from '../utils/waveform'
 import { snapToFrame, frameDurationMs } from '../utils/frame'
 import { allKeyframeTimes } from '../utils/keyframes'
 
@@ -632,66 +632,91 @@ function TransitionPopup({ itemId, rect, onClose }: { itemId: string; rect: DOMR
 }
 
 // ── WaveformBars ─────────────────────────────────────────────────────────────
-function WaveformBars({ path, trimStart, trimEnd, duration, volume }: {
-  path: string; trimStart: number; trimEnd: number; duration: number; volume: number
+function WaveformBars({ path, trimStart, trimEnd, volume, kind }: {
+  path: string; trimStart: number; trimEnd: number; volume: number; kind: 'audio' | 'video'
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const [waveform, setWaveform] = useState<import('../utils/waveform').WaveformData | null>(null)
+  const [waveform, setWaveform] = useState<WaveformData | null>(null)
 
   useEffect(() => {
     let active = true
+    setWaveform(null)
     getWaveform(path).then(w => { if (active) setWaveform(w) }).catch(() => {})
     return () => { active = false }
   }, [path])
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current
-    if (!canvas || !waveform) return
+    if (!canvas) return
     const rect = canvas.getBoundingClientRect()
     if (!rect.width || !rect.height) return
     const dpr = window.devicePixelRatio || 1
     canvas.width  = Math.round(rect.width  * dpr)
     canvas.height = Math.round(rect.height * dpr)
     const ctx = canvas.getContext('2d')!
-    const W = canvas.width, H = canvas.height, mid = H / 2
+    const W = canvas.width, H = canvas.height
 
     ctx.clearRect(0, 0, W, H)
 
-    const totalSamples = waveform.length
-    const s0 = Math.floor((trimStart / duration) * totalSamples)
-    const s1 = Math.ceil( (trimEnd   / duration) * totalSamples)
-    const span = Math.max(1, s1 - s0)
+    const colors = kind === 'audio'
+      ? {
+          peak: 'rgba(88, 184, 255, 0.30)',
+          rms: 'rgba(178, 225, 255, 0.86)',
+          center: 'rgba(142, 209, 255, 0.24)',
+        }
+      : {
+          peak: 'rgba(132, 226, 170, 0.20)',
+          rms: 'rgba(184, 245, 203, 0.62)',
+          center: 'rgba(162, 230, 185, 0.18)',
+        }
 
-    // Draw per-pixel column: peak (wide, faint) + RMS (narrower, bright)
-    for (let x = 0; x < W; x++) {
-      const lo = s0 + Math.floor( (x / W)       * span)
-      const hi = s0 + Math.floor(((x + 1) / W)  * span)
-
-      let maxPeak = 0, sumRms = 0, count = 0
-      for (let i = lo; i < Math.min(hi + 1, totalSamples); i++) {
-        if (waveform.peaks[i] > maxPeak) maxPeak = waveform.peaks[i]
-        sumRms += waveform.rms[i] * waveform.rms[i]
-        count++
-      }
-      const rmsVal = count > 0 ? Math.sqrt(sumRms / count) : 0
-
-      const volScale = Math.min(2, volume / 100)
-
-      // Peak layer
-      const pH = Math.max(1, Math.min(mid - 1, maxPeak * (mid - 1) * 0.96 * volScale))
-      ctx.fillStyle = 'rgba(90, 190, 255, 0.28)'
-      ctx.fillRect(x, mid - pH, 1, pH * 2)
-
-      // RMS layer (brighter, slightly narrower)
-      const rH = Math.max(1, Math.min(mid - 1, rmsVal * (mid - 1) * 0.96 * volScale))
-      ctx.fillStyle = 'rgba(160, 220, 255, 0.90)'
-      ctx.fillRect(x, mid - rH, 1, rH * 2)
+    if (!waveform) {
+      drawWaveformCenterLines(ctx, H, W, 1, colors.center)
+      return
     }
 
-    // Center line
-    ctx.fillStyle = 'rgba(120, 200, 255, 0.25)'
-    ctx.fillRect(0, mid - 0.5, W, 1)
-  }, [waveform, trimStart, trimEnd, duration, volume])
+    const visibleDurationMs = Math.max(1, trimEnd - trimStart)
+    const level = selectWaveformLevel(waveform, visibleDurationMs, W)
+    if (!level || level.length === 0 || level.channels.length === 0) {
+      drawWaveformCenterLines(ctx, H, W, 1, colors.center)
+      return
+    }
+
+    const laneCount = level.channels.length > 1 && H >= 28 * dpr ? 2 : 1
+    const laneGap = laneCount > 1 ? Math.max(1, Math.round(2 * dpr)) : 0
+    const laneHeight = (H - laneGap * (laneCount - 1)) / laneCount
+    const startIndex = Math.max(0, Math.floor((trimStart / 1000) * level.pointsPerSecond))
+    const endIndex = Math.max(startIndex + 1, Math.ceil((trimEnd / 1000) * level.pointsPerSecond))
+    const span = Math.max(1, endIndex - startIndex)
+    const volScale = Math.max(0, Math.min(2, volume / 100))
+
+    drawWaveformCenterLines(ctx, H, W, laneCount, colors.center)
+
+    for (let x = 0; x < W; x++) {
+      const lo = startIndex + Math.floor((x / W) * span)
+      const hi = startIndex + Math.ceil(((x + 1) / W) * span)
+
+      for (let lane = 0; lane < laneCount; lane++) {
+        const laneTop = lane * (laneHeight + laneGap)
+        const mid = laneTop + laneHeight / 2
+        const half = Math.max(1, laneHeight / 2 - 1)
+        const sourceChannels = laneCount === 1 ? level.channels : [level.channels[lane]]
+        const sample = readWaveformRange(sourceChannels, lo, hi, level)
+
+        const topPeak = Math.min(half, sample.positive * half * 0.96 * volScale)
+        const bottomPeak = Math.min(half, Math.abs(sample.negative) * half * 0.96 * volScale)
+        ctx.fillStyle = colors.peak
+        if (topPeak > 0) ctx.fillRect(x, mid - topPeak, 1, topPeak)
+        if (bottomPeak > 0) ctx.fillRect(x, mid, 1, bottomPeak)
+
+        const rmsHeight = Math.min(half, sample.rms * half * 0.96 * volScale)
+        if (rmsHeight > 0) {
+          ctx.fillStyle = colors.rms
+          ctx.fillRect(x, mid - Math.max(0.5, rmsHeight), 1, Math.max(1, rmsHeight * 2))
+        }
+      }
+    }
+  }, [waveform, trimStart, trimEnd, volume, kind])
 
   useEffect(() => { draw() }, [draw])
 
@@ -709,6 +734,48 @@ function WaveformBars({ path, trimStart, trimEnd, duration, volume }: {
       style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block', pointerEvents: 'none' }}
     />
   )
+}
+
+function drawWaveformCenterLines(
+  ctx: CanvasRenderingContext2D,
+  height: number,
+  width: number,
+  laneCount: number,
+  color: string,
+) {
+  const laneGap = laneCount > 1 ? Math.max(1, Math.round(2 * (window.devicePixelRatio || 1))) : 0
+  const laneHeight = (height - laneGap * (laneCount - 1)) / laneCount
+  ctx.fillStyle = color
+  for (let lane = 0; lane < laneCount; lane++) {
+    const mid = lane * (laneHeight + laneGap) + laneHeight / 2
+    ctx.fillRect(0, Math.round(mid), width, 1)
+  }
+}
+
+function readWaveformRange(channels: WaveformLevel['channels'], lo: number, hi: number, level: WaveformLevel) {
+  const end = Math.min(Math.max(hi, lo + 1), level.length)
+  const start = Math.max(0, Math.min(lo, end - 1))
+  let positive = 0
+  let negative = 0
+  let rmsSq = 0
+  let count = 0
+
+  for (const channel of channels) {
+    if (!channel) continue
+    for (let i = start; i < end; i++) {
+      positive = Math.max(positive, channel.positive[i] ?? 0)
+      negative = Math.min(negative, channel.negative[i] ?? 0)
+      const rms = channel.rms[i] ?? 0
+      rmsSq += rms * rms
+      count++
+    }
+  }
+
+  return {
+    positive,
+    negative,
+    rms: count > 0 ? Math.sqrt(rmsSq / count) : 0,
+  }
 }
 
 // ── TrackRow ────────────────────────────────────────────────────────────────
@@ -794,8 +861,8 @@ function TrackRow({ trackIdx, trackHeight, clips, timelineItems, msToPx, dragOve
               style={{ ...styles.clip, left: msToPx(item.startTime), width: Math.max(msToPx(item.trimEnd - item.trimStart), 4), height: trackHeight - 6, background: bg, borderColor: border, outline: isSelected ? '2px solid #fff' : 'none', outlineOffset: -1 }}
               onMouseDown={e => onClipMouseDown(e, item.id)}
             >
-              {clip.type === 'audio' && (
-                <WaveformBars path={clip.path} trimStart={item.trimStart} trimEnd={item.trimEnd} duration={clip.duration} volume={item.volume ?? 100} />
+              {(clip.type === 'audio' || clip.type === 'video') && (
+                <WaveformBars path={clip.path} trimStart={item.trimStart} trimEnd={item.trimEnd} volume={item.volume ?? 100} kind={clip.type} />
               )}
               <div style={styles.resizeL} onMouseDown={e => onResizeMouseDown(e, item.id, 'left')} />
               <span style={styles.clipLabel} title={clip.name}>{clip.name}</span>

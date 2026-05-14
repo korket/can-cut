@@ -24,6 +24,34 @@ interface MediaPathValidationResult {
   error?: string
 }
 
+interface MediaWaveformChannelData {
+  positive: number[]
+  negative: number[]
+  rms: number[]
+}
+
+interface MediaWaveformLevel {
+  samplesPerPoint: number
+  pointsPerSecond: number
+  length: number
+  channels: MediaWaveformChannelData[]
+}
+
+interface MediaWaveformData {
+  version: 1
+  path: string
+  fileSize: number
+  mtimeMs: number
+  durationMs: number
+  sampleRate: number
+  channelCount: number
+  levels: MediaWaveformLevel[]
+}
+
+type MediaWaveformResult =
+  | MediaWaveformData
+  | { error: string }
+
 interface FrameExportOptions {
   W: number
   H: number
@@ -94,6 +122,7 @@ interface Window {
     getVideoInfo: (path: string) => Promise<any>
     getThumbnail: (path: string, timeMs: number) => Promise<string>
     validateMediaPaths: (paths: string[]) => Promise<MediaPathValidationResult[]>
+    getWaveform: (path: string) => Promise<MediaWaveformResult>
     startFrameExport?: (jobId: string, opts: FrameExportOptions) => Promise<FrameExportStartResult>
     sendExportFrame?: (jobId: string, buf: ArrayBuffer) => Promise<FrameExportSendResult>
     finishFrameExport?: (jobId: string) => Promise<FrameExportFinishResult>
