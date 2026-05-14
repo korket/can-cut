@@ -25,6 +25,14 @@ interface ProjectRecoverySnapshot extends ProjectVersionMeta {
   data: string
 }
 
+interface MediaImportEntry {
+  sourcePath: string
+  name: string
+  isDirectory: boolean
+  files: string[]
+  skipped: number
+}
+
 interface ExportEncoderSettings {
   videoCodec: 'libx264'
   x264Preset: 'ultrafast' | 'veryfast' | 'fast' | 'medium' | 'slow'
@@ -141,6 +149,7 @@ interface Window {
     getVideoInfo: (path: string) => Promise<any>
     getThumbnail: (path: string, timeMs: number) => Promise<string>
     validateMediaPaths: (paths: string[]) => Promise<MediaPathValidationResult[]>
+    resolveMediaImportPaths: (paths: string[]) => Promise<MediaImportEntry[]>
     getWaveform: (path: string) => Promise<MediaWaveformResult>
     startFrameExport?: (jobId: string, opts: FrameExportOptions) => Promise<FrameExportStartResult>
     sendExportFrame?: (jobId: string, buf: ArrayBuffer) => Promise<FrameExportSendResult>

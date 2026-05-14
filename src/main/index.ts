@@ -7,6 +7,7 @@ import {
   type ExportJobService,
 } from './export/jobService'
 import { createMediaAnalysisService, registerMediaAnalysisIpc } from './mediaAnalysis'
+import { registerMediaImportIpc } from './mediaImport'
 import { createProjectStore, registerProjectIpc } from './projects'
 import { registerSystemFontIpc } from './systemFonts'
 
@@ -213,7 +214,7 @@ app.on('window-all-closed', () => {
 
 ipcMain.handle('dialog:openFiles', async () => {
   const { canceled, filePaths } = await dialog.showOpenDialog({
-    properties: ['openFile', 'multiSelections'],
+    properties: ['openFile', 'openDirectory', 'multiSelections'],
     filters: [
       { name: 'Media Files', extensions: ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv', 'flv', 'mp3', 'wav', 'aac', 'm4a', 'ogg', 'flac', 'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'tiff', 'tif', 'avif'] },
       { name: 'Video Files', extensions: ['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv', 'flv'] },
@@ -234,5 +235,6 @@ registerExportIpc(ipcMain, {
 })
 ipcMain.handle('shell:openPath', (_event, path: string) => shell.openPath(path))
 registerSystemFontIpc(ipcMain)
+registerMediaImportIpc(ipcMain)
 registerMediaAnalysisIpc(ipcMain, mediaAnalysis)
 registerProjectIpc(ipcMain, projectStore)

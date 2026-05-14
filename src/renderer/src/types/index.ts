@@ -10,6 +10,7 @@ export interface MediaClip {
   thumbnail?: string
   folderId?: string | null
   color?: string   // solid color clips only
+  importedAt?: string
 }
 
 export interface MediaFolder {

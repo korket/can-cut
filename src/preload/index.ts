@@ -7,6 +7,7 @@ const appApi = {
   getVideoInfo: (path: string) => ipcRenderer.invoke('ffprobe:getInfo', path),
   getThumbnail: (path: string, timeMs: number) => ipcRenderer.invoke('ffmpeg:thumbnail', path, timeMs),
   validateMediaPaths: (paths: string[]) => ipcRenderer.invoke('media:validatePaths', paths),
+  resolveMediaImportPaths: (paths: string[]) => ipcRenderer.invoke('media:resolveImportPaths', paths),
   getWaveform: (path: string) => ipcRenderer.invoke('media:waveform', path),
   startExportJob:    (request: unknown) => ipcRenderer.invoke('export:jobStart', request),
   getExportJobs:     () => ipcRenderer.invoke('export:jobList'),

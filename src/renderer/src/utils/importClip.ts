@@ -21,6 +21,7 @@ export async function importClip(path: string): Promise<MediaClip | null> {
   try {
     const ext = path.split('.').pop()?.toLowerCase() ?? ''
     const name = path.split(/[\\/]/).pop() ?? path
+    const importedAt = new Date().toISOString()
 
     if (IMAGE_EXTS.has(ext)) {
       // Use ffprobe to get dimensions; images have no duration so default to 5s
@@ -41,7 +42,8 @@ export async function importClip(path: string): Promise<MediaClip | null> {
         height,
         fps: 30,
         type: 'image',
-        thumbnail: `file://${path}`
+        thumbnail: `file://${path}`,
+        importedAt,
       }
     }
 
@@ -57,7 +59,8 @@ export async function importClip(path: string): Promise<MediaClip | null> {
       width: vs?.width ?? 1920,
       height: vs?.height ?? 1080,
       fps: vs ? evalFPS(vs.r_frame_rate) : 30,
-      type: vs ? 'video' : 'audio'
+      type: vs ? 'video' : 'audio',
+      importedAt,
     }
 
     if (clip.type === 'video') {
@@ -75,15 +78,40 @@ export async function importClip(path: string): Promise<MediaClip | null> {
 }
 
 export async function importAndAddClips(paths: string[], folderId?: string): Promise<MediaClip[]> {
-  const { addClip } = useEditorStore.getState()
+  const { addClip, addFolder } = useEditorStore.getState()
+  const entries = await window.api.resolveMediaImportPaths(paths)
   const results: MediaClip[] = []
-  for (const path of paths) {
-    if (!isSupportedMedia(path)) continue
-    const clip = await importClip(path)
-    if (clip) {
-      if (folderId) clip.folderId = folderId
-      addClip(clip)
-      results.push(clip)
+  const folderNames = new Set(useEditorStore.getState().folders.map((folder) => folder.name.toLowerCase()))
+
+  function uniqueFolderName(baseName: string) {
+    const rootName = baseName.trim() || 'Imported Folder'
+    let name = rootName
+    let suffix = 2
+    while (folderNames.has(name.toLowerCase())) {
+      name = `${rootName} ${suffix}`
+      suffix += 1
+    }
+    folderNames.add(name.toLowerCase())
+    return name
+  }
+
+  for (const entry of entries) {
+    if (entry.files.length === 0) continue
+
+    let targetFolderId = folderId
+    if (!targetFolderId && entry.isDirectory) {
+      targetFolderId = nanoid()
+      addFolder({ id: targetFolderId, name: uniqueFolderName(entry.name) })
+    }
+
+    for (const path of entry.files) {
+      if (!isSupportedMedia(path)) continue
+      const clip = await importClip(path)
+      if (clip) {
+        if (targetFolderId) clip.folderId = targetFolderId
+        addClip(clip)
+        results.push(clip)
+      }
     }
   }
   return results

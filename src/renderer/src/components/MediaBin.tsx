@@ -12,9 +12,19 @@ function formatDuration(ms: number) {
 
 type ViewMode   = 'grid' | 'list'
 type TypeFilter = 'all' | 'video' | 'audio' | 'image' | 'solid'
+type SortMode = 'recent' | 'name-asc' | 'name-desc' | 'type' | 'duration-desc' | 'duration-asc'
 
 const TYPE_BADGE: Record<string, string> = {
   video: 'VIDEO', audio: 'AUDIO', image: 'IMG', solid: 'SOLID',
+}
+
+const SORT_LABELS: Record<SortMode, string> = {
+  recent: 'Newest',
+  'name-asc': 'Name A-Z',
+  'name-desc': 'Name Z-A',
+  type: 'Type',
+  'duration-desc': 'Longest',
+  'duration-asc': 'Shortest',
 }
 
 // ── Context menu ──────────────────────────────────────────────────────────────
@@ -221,6 +231,7 @@ export default function MediaBin() {
   const [folderDragOver, setFolderDragOver]     = useState<string | 'root' | null>(null)
   const [search, setSearch]                     = useState('')
   const [typeFilter, setTypeFilter]             = useState<TypeFilter>('all')
+  const [sortMode, setSortMode]                 = useState<SortMode>('recent')
   const [viewMode, setViewMode]                 = useState<ViewMode>('grid')
   const [contextMenu, setContextMenu]           = useState<{ clipId: string; x: number; y: number } | null>(null)
 
@@ -239,12 +250,36 @@ export default function MediaBin() {
     })
   }
 
+  function sortClips(list: MediaClip[]) {
+    const importedMs = (clip: MediaClip) => clip.importedAt ? new Date(clip.importedAt).getTime() : 0
+    const byName = (a: MediaClip, b: MediaClip) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+    const byType = (a: MediaClip, b: MediaClip) => a.type.localeCompare(b.type) || byName(a, b)
+
+    return list
+      .map((clip, index) => ({ clip, index }))
+      .sort((a, b) => {
+        let result = 0
+        if (sortMode === 'recent') result = importedMs(b.clip) - importedMs(a.clip)
+        else if (sortMode === 'name-asc') result = byName(a.clip, b.clip)
+        else if (sortMode === 'name-desc') result = byName(b.clip, a.clip)
+        else if (sortMode === 'type') result = byType(a.clip, b.clip)
+        else if (sortMode === 'duration-desc') result = b.clip.duration - a.clip.duration || byName(a.clip, b.clip)
+        else if (sortMode === 'duration-asc') result = a.clip.duration - b.clip.duration || byName(a.clip, b.clip)
+        return result || a.index - b.index
+      })
+      .map(({ clip }) => clip)
+  }
+
+  function sortFolders(list: MediaFolder[]) {
+    return [...list].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+  }
+
   // Clips shown in main pane
-  const visibleClips = filterClips(
+  const visibleClips = sortClips(filterClips(
     selectedFolder === null
       ? clips.filter(c => !c.folderId)                     // All Media: unassigned clips only
       : clips.filter(c => c.folderId === selectedFolder)   // specific folder
-  )
+  ))
 
   async function handleImport() {
     const paths = await window.api.openFiles()
@@ -322,6 +357,7 @@ export default function MediaBin() {
       id: nanoid(), name: `Solid ${solidColor.toUpperCase()}`,
       path: '', duration: 3_600_000, width: 1920, height: 1080,
       fps: 30, type: 'solid', color: solidColor,
+      importedAt: new Date().toISOString(),
     })
   }
 
@@ -344,7 +380,7 @@ export default function MediaBin() {
   }
 
   const isEmpty = clips.length === 0 && folders.length === 0
-  const visibleFolders = selectedFolder === null ? folders : []
+  const visibleFolders = selectedFolder === null ? sortFolders(folders) : []
 
   return (
     <div style={s.bin} onClick={() => contextMenu && setContextMenu(null)}>
@@ -367,12 +403,24 @@ export default function MediaBin() {
       {/* ── Filter bar ── */}
       <div style={s.filterBar}>
         <input style={s.searchInput} placeholder="Search…" value={search} onChange={e => setSearch(e.target.value)} />
-        <div style={s.pills}>
-          {(['all','video','audio','image','solid'] as TypeFilter[]).map(t => (
-            <button key={t} style={{ ...s.pill, ...(typeFilter === t ? s.pillOn : {}) }} onClick={() => setTypeFilter(t)}>
-              {t === 'all' ? 'All' : t[0].toUpperCase() + t.slice(1)}
-            </button>
-          ))}
+        <div style={s.filterTools}>
+          <div style={s.pills}>
+            {(['all','video','audio','image','solid'] as TypeFilter[]).map(t => (
+              <button key={t} style={{ ...s.pill, ...(typeFilter === t ? s.pillOn : {}) }} onClick={() => setTypeFilter(t)}>
+                {t === 'all' ? 'All' : t[0].toUpperCase() + t.slice(1)}
+              </button>
+            ))}
+          </div>
+          <select
+            style={s.sortSelect}
+            value={sortMode}
+            onChange={e => setSortMode(e.target.value as SortMode)}
+            title="Sort media"
+          >
+            {(Object.keys(SORT_LABELS) as SortMode[]).map(mode => (
+              <option key={mode} value={mode}>{SORT_LABELS[mode]}</option>
+            ))}
+          </select>
         </div>
       </div>
 
@@ -404,7 +452,7 @@ export default function MediaBin() {
               <div style={s.sideDivider} />
 
               {/* Folders */}
-              {folders.map(f => (
+              {sortFolders(folders).map(f => (
                 <SidebarItem key={f.id}
                   label={f.name} count={clips.filter(c => c.folderId === f.id).length}
                   selected={selectedFolder === f.id} isFolder dragOver={folderDragOver === f.id}
@@ -457,7 +505,7 @@ export default function MediaBin() {
             <div style={s.empty} onClick={handleImport}>
               <div style={s.emptyIcon}>▶</div>
               <div style={s.emptyTxt}>Click to import</div>
-              <div style={s.emptySub}>or drag files here</div>
+              <div style={s.emptySub}>or drag files and folders here</div>
             </div>
           )}
 
@@ -521,9 +569,11 @@ const s: Record<string, React.CSSProperties> = {
   // Filter bar
   filterBar:   { display: 'flex', flexDirection: 'column', gap: 5, padding: '7px 10px', borderBottom: '1px solid #1e1e1e', flexShrink: 0 },
   searchInput: { background: '#181818', border: '1px solid #2a2a2a', borderRadius: 4, color: '#ccc', padding: '4px 8px', fontSize: 12, outline: 'none', width: '100%', boxSizing: 'border-box' },
-  pills:       { display: 'flex', gap: 3 },
+  filterTools: { display: 'flex', flexDirection: 'column', gap: 5, minWidth: 0 },
+  pills:       { display: 'flex', flexWrap: 'wrap', gap: 3, minWidth: 0 },
   pill:        { background: 'none', border: '1px solid #252525', color: '#555', borderRadius: 3, padding: '2px 6px', fontSize: 10, cursor: 'pointer' },
   pillOn:      { background: '#252525', border: '1px solid #3a3a3a', color: '#bbb' },
+  sortSelect:  { background: '#181818', border: '1px solid #2a2a2a', color: '#aaa', borderRadius: 4, padding: '3px 6px', fontSize: 11, outline: 'none', width: '100%' },
 
   // Solid color
   solidRow:   { display: 'flex', alignItems: 'center', gap: 7, padding: '5px 10px', borderBottom: '1px solid #1a1a1a', flexShrink: 0 },
