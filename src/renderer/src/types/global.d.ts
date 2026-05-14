@@ -6,6 +6,25 @@ interface ProjectMeta {
   thumbnail?: string | null
 }
 
+type ProjectVersionKind = 'manual' | 'auto'
+
+interface ProjectVersionMeta {
+  id: string
+  projectId: string
+  label: string
+  kind: ProjectVersionKind
+  createdAt: string
+  projectUpdatedAt?: string
+  thumbnail?: string | null
+  clipCount: number
+  timelineItemCount: number
+  textOverlayCount: number
+}
+
+interface ProjectRecoverySnapshot extends ProjectVersionMeta {
+  data: string
+}
+
 interface ExportEncoderSettings {
   videoCodec: 'libx264'
   x264Preset: 'ultrafast' | 'veryfast' | 'fast' | 'medium' | 'slow'
@@ -144,5 +163,12 @@ interface Window {
     loadProject: (id: string) => Promise<string | null>
     deleteProject: (id: string) => Promise<void>
     renameProject: (id: string, name: string) => Promise<void>
+    listProjectVersions: (id: string) => Promise<ProjectVersionMeta[]>
+    createProjectVersion: (id: string, data: string, options?: { label?: string; kind?: ProjectVersionKind }) => Promise<ProjectVersionMeta>
+    loadProjectVersion: (id: string, versionId: string) => Promise<string | null>
+    deleteProjectVersion: (id: string, versionId: string) => Promise<void>
+    duplicateProjectVersion: (id: string, versionId: string, name?: string) => Promise<ProjectMeta>
+    saveProjectRecovery: (id: string, data: string) => Promise<void>
+    loadProjectRecovery: (id: string) => Promise<ProjectRecoverySnapshot | null>
   }
 }

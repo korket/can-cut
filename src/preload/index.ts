@@ -25,6 +25,13 @@ const appApi = {
   loadProject:   (id: string)                => ipcRenderer.invoke('project:load', id),
   deleteProject: (id: string)                => ipcRenderer.invoke('project:delete', id),
   renameProject: (id: string, name: string)  => ipcRenderer.invoke('project:rename', id, name),
+  listProjectVersions:   (id: string) => ipcRenderer.invoke('project:versions:list', id),
+  createProjectVersion:  (id: string, data: string, options?: unknown) => ipcRenderer.invoke('project:versions:create', id, data, options),
+  loadProjectVersion:    (id: string, versionId: string) => ipcRenderer.invoke('project:versions:load', id, versionId),
+  deleteProjectVersion:  (id: string, versionId: string) => ipcRenderer.invoke('project:versions:delete', id, versionId),
+  duplicateProjectVersion: (id: string, versionId: string, name?: string) => ipcRenderer.invoke('project:versions:duplicate', id, versionId, name),
+  saveProjectRecovery:   (id: string, data: string) => ipcRenderer.invoke('project:recovery:save', id, data),
+  loadProjectRecovery:   (id: string) => ipcRenderer.invoke('project:recovery:load', id),
 }
 
 const exportWorkerApi = {

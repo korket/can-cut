@@ -6,6 +6,7 @@ import type { Tool } from '../types'
 interface Props {
   onExport: () => void
   onShortcuts: () => void
+  onVersions: () => void
   onBack: () => void
   projectName: string
 }
@@ -17,7 +18,7 @@ const tools: { id: Tool; label: string; icon: string; shortcutId: string }[] = [
 
 const FPS_OPTIONS = [23.976, 24, 25, 29.97, 30, 50, 59.94, 60]
 
-export default function TopBar({ onExport, onShortcuts, onBack, projectName }: Props) {
+export default function TopBar({ onExport, onShortcuts, onVersions, onBack, projectName }: Props) {
   const { tool, setTool, fps, setFps } = useEditorStore()
   const shortcuts = useShortcutsStore((s) => s.shortcuts)
   const sc = (id: string) => shortcuts.find((s) => s.id === id)
@@ -64,6 +65,7 @@ export default function TopBar({ onExport, onShortcuts, onBack, projectName }: P
             <option key={f} value={f}>{f} fps</option>
           ))}
         </select>
+        <button style={styles.shortcutsBtn} onClick={onVersions}>Versions</button>
         <button style={styles.shortcutsBtn} onClick={onShortcuts}>Shortcuts</button>
         <button style={styles.exportBtn} onClick={onExport} title={sc('export') ? formatShortcut(sc('export')!) : 'Export'}>
           Export
