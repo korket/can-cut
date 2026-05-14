@@ -28,6 +28,10 @@ const SORT_LABELS: Record<SortMode, string> = {
   'duration-asc': 'Shortest',
 }
 
+function selectOnFocus(e: React.FocusEvent<HTMLInputElement>) {
+  e.currentTarget.select()
+}
+
 // ── Context menu ──────────────────────────────────────────────────────────────
 
 interface CtxMenuProps {
@@ -198,6 +202,7 @@ function SidebarItem({ label, count, selected, isFolder, dragOver, editing, edit
         <input
           style={s.sideInput}
           value={editName} autoFocus
+          onFocus={selectOnFocus}
           onChange={e => onEditChange(e.target.value)}
           onBlur={onEditBlur} onKeyDown={onEditKey}
           onClick={e => e.stopPropagation()}

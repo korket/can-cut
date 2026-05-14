@@ -9,6 +9,10 @@ interface Props {
   onOpenProject: (id: string) => Promise<void>
 }
 
+function selectOnFocus(e: React.FocusEvent<HTMLInputElement>) {
+  e.currentTarget.select()
+}
+
 type VersionTab = 'manual' | 'auto'
 
 function formatDate(iso: string) {
@@ -186,6 +190,7 @@ export default function VersionHistoryModal({
             style={styles.input}
             value={label}
             placeholder="Version name"
+            onFocus={selectOnFocus}
             onChange={(e) => setLabel(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') handleSaveVersion()

@@ -5,6 +5,10 @@ import { DEFAULT_TRANSFORM, DEFAULT_EFFECTS, DEFAULT_ANIMATION, DEFAULT_TRANSITI
 import { nanoid } from '../utils/nanoid'
 import { hasKeyframeAt, applyKeyframesToTransform, applyKeyframesToEffects } from '../utils/keyframes'
 
+function selectOnFocus(e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement>) {
+  e.currentTarget.select()
+}
+
 export default function PropertiesPanel() {
   const {
     selectedId, setSelectedId, timelineItems, textOverlays,
@@ -877,6 +881,7 @@ function DragNumber({ value, min, max, step, speed = 1, onChange }: {
         value={editVal}
         autoFocus
         style={styles.tNum}
+        onFocus={selectOnFocus}
         onChange={e => setEditVal(e.target.value)}
         onBlur={() => {
           const v = parseFloat(editVal)
@@ -1099,7 +1104,7 @@ function TextProps({ overlay, update }: {
     <div style={styles.section}>
       <div style={styles.sectionTitle}>Text</div>
       <label style={styles.label}>Content</label>
-      <textarea style={styles.textarea} value={overlay.text} onChange={e => update({ text: e.target.value })} rows={2} />
+      <textarea style={styles.textarea} value={overlay.text} onFocus={selectOnFocus} onChange={e => update({ text: e.target.value })} rows={2} />
 
       <label style={styles.label}>Font</label>
       <div style={styles.fontPicker}>
@@ -1180,9 +1185,9 @@ function TextProps({ overlay, update }: {
       </div>
 
       <label style={styles.label}>Position X</label>
-      <input type="number" value={overlay.x} onChange={e => update({ x: +e.target.value })} style={styles.input} />
+      <input type="number" value={overlay.x} onFocus={selectOnFocus} onChange={e => update({ x: +e.target.value })} style={styles.input} />
       <label style={styles.label}>Position Y</label>
-      <input type="number" value={overlay.y} onChange={e => update({ y: +e.target.value })} style={styles.input} />
+      <input type="number" value={overlay.y} onFocus={selectOnFocus} onChange={e => update({ y: +e.target.value })} style={styles.input} />
     </div>
   )
 }
@@ -1196,12 +1201,12 @@ function TextClipProps({ overlay, update, onDelete }: {
     <div style={styles.section}>
       <div style={styles.sectionTitle}>Title Clip</div>
       <label style={styles.label}>Video Track</label>
-      <input type="number" min={1} value={overlay.trackIndex + 1} onChange={e => update({ trackIndex: Math.max(0, +e.target.value - 1) })} style={styles.input} />
+      <input type="number" min={1} value={overlay.trackIndex + 1} onFocus={selectOnFocus} onChange={e => update({ trackIndex: Math.max(0, +e.target.value - 1) })} style={styles.input} />
 
       <label style={styles.label}>Start (ms)</label>
-      <input type="number" value={overlay.startTime} onChange={e => update({ startTime: Math.max(0, Math.min(+e.target.value, overlay.endTime - 1)) })} style={styles.input} />
+      <input type="number" value={overlay.startTime} onFocus={selectOnFocus} onChange={e => update({ startTime: Math.max(0, Math.min(+e.target.value, overlay.endTime - 1)) })} style={styles.input} />
       <label style={styles.label}>End (ms)</label>
-      <input type="number" value={overlay.endTime} onChange={e => update({ endTime: Math.max(overlay.startTime + 1, +e.target.value) })} style={styles.input} />
+      <input type="number" value={overlay.endTime} onFocus={selectOnFocus} onChange={e => update({ endTime: Math.max(overlay.startTime + 1, +e.target.value) })} style={styles.input} />
 
       <button style={styles.deleteBtn} onClick={onDelete}>Delete Title</button>
     </div>
@@ -1220,9 +1225,9 @@ function ClipProps({ item, clip, update }: {
         Clip — <span style={{ color: '#bbb', fontWeight: 400 }}>{clip.name}</span>
       </div>
       <label style={styles.label}>Trim Start (ms)</label>
-      <input type="number" value={item.trimStart} min={0} max={item.trimEnd - 1} onChange={e => update({ trimStart: +e.target.value })} style={styles.input} />
+      <input type="number" value={item.trimStart} min={0} max={item.trimEnd - 1} onFocus={selectOnFocus} onChange={e => update({ trimStart: +e.target.value })} style={styles.input} />
       <label style={styles.label}>Trim End (ms)</label>
-      <input type="number" value={item.trimEnd} min={item.trimStart + 1} max={clip.duration} onChange={e => update({ trimEnd: +e.target.value })} style={styles.input} />
+      <input type="number" value={item.trimEnd} min={item.trimStart + 1} max={clip.duration} onFocus={selectOnFocus} onChange={e => update({ trimEnd: +e.target.value })} style={styles.input} />
       <div style={styles.info}>Duration: {((item.trimEnd - item.trimStart) / 1000).toFixed(2)}s</div>
     </div>
   )
