@@ -159,6 +159,7 @@ export interface TextOverlay {
   color: string
   x: number          // px
   y: number          // px
+  trackIndex: number // video track used for timeline/layer ordering
   startTime: number  // ms on timeline
   endTime: number    // ms on timeline
   bold: boolean

@@ -1,6 +1,6 @@
 import type { Effects, Transform } from '../types'
 import { DEFAULT_ANIMATION, DEFAULT_EFFECTS, DEFAULT_TRANSFORM } from '../types'
-import type { RenderPlan, TextRenderLayer } from './renderPlan'
+import type { RenderPlan } from './renderPlan'
 import { DEFAULT_EXPORT_PROFILE, type ExportEncoderSettings } from './exportSettings'
 
 type NativeExportTransform = Pick<
@@ -106,14 +106,9 @@ function animationIsDefault(layer: { animation?: unknown }) {
   )
 }
 
-function textIsNativeSafe(layer: TextRenderLayer) {
-  const fontFamily = (layer.fontFamily || 'sans-serif').toLowerCase()
-  return !layer.bold && !layer.italic && fontFamily === 'sans-serif'
-}
-
 export function getNativeExportEligibility(plan: RenderPlan): NativeExportEligibility {
-  if (plan.textLayers.some((layer) => !textIsNativeSafe(layer))) {
-    return { ok: false, reason: 'styled text requires renderer export' }
+  if (plan.textLayers.length > 0) {
+    return { ok: false, reason: 'title clips require renderer export' }
   }
 
   for (const layer of plan.videoLayers) {

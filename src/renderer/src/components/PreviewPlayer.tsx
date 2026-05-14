@@ -11,6 +11,7 @@ import { useShortcutsStore, matchesShortcut } from '../store/useShortcutsStore'
 import type { TextOverlay, TimelineItem, MediaClip, Transform } from '../types'
 import { DEFAULT_TRANSFORM } from '../types'
 import { formatTimecode, snapToFrame, frameDurationMs } from '../utils/frame'
+import { nanoid } from '../utils/nanoid'
 
 const PREVIEW_W = 1920
 const PREVIEW_H = 1080
@@ -36,7 +37,8 @@ export default function PreviewPlayer() {
     clips, timelineItems, textOverlays,
     currentTime, setCurrentTime, isPlaying, setIsPlaying,
     fps, selectedId, updateTransform, updateTimelineItem,
-    hoverPreviewClip,
+    hoverPreviewClip, tool, addTextOverlay, updateTextOverlay, setSelectedId,
+    videoTrackCount,
   } = useEditorStore()
 
   const previewEngineRef = useRef<PreviewEngine | null>(null)
@@ -79,7 +81,12 @@ export default function PreviewPlayer() {
   const latestRenderPlanRef = useRef(renderPlan)
   const selectedItem = selectedId ? previewTimelineItems.find(i => i.id === selectedId) ?? null : null
   const selectedClip = selectedItem ? previewClips.find(c => c.id === selectedItem.clipId) ?? null : null
+  const selectedOverlay = selectedId ? textOverlays.find(o => o.id === selectedId) ?? null : null
+  const visibleSelectedOverlay = selectedOverlay && currentTime >= selectedOverlay.startTime && currentTime < selectedOverlay.endTime
+    ? selectedOverlay
+    : null
   const selectedHasKB = !!(selectedItem?.kenBurns)
+  const hasPreviewContent = previewTimelineItems.length > 0 || textOverlays.length > 0
 
   // Exit focal mode automatically when selection changes or KB is removed
   useEffect(() => { if (!selectedHasKB) setFocalMode(false) }, [selectedHasKB])
@@ -110,6 +117,39 @@ export default function PreviewPlayer() {
     const x = Math.round(Math.max(0, Math.min(100, (e.clientX - r.left) / r.width  * 100)) * 10) / 10
     const y = Math.round(Math.max(0, Math.min(100, (e.clientY - r.top)  / r.height * 100)) * 10) / 10
     updateTimelineItem(selectedItem.id, { kenBurns: { ...selectedItem.kenBurns, focalX: x, focalY: y } })
+  }
+
+  function canvasPointFromEvent(e: React.MouseEvent<HTMLDivElement>) {
+    if (!viewportRef.current) return null
+    const rect = viewportRef.current.getBoundingClientRect()
+    return {
+      x: Math.round(Math.max(0, Math.min(PREVIEW_W, (e.clientX - rect.left) / rect.width * PREVIEW_W))),
+      y: Math.round(Math.max(0, Math.min(PREVIEW_H, (e.clientY - rect.top) / rect.height * PREVIEW_H))),
+    }
+  }
+
+  function addTextAtPreviewPoint(e: React.MouseEvent<HTMLDivElement>) {
+    if (tool !== 'text') return
+    if ((e.target as HTMLElement).closest('[data-text-handle]')) return
+    const point = canvasPointFromEvent(e)
+    if (!point) return
+    e.preventDefault()
+    const id = nanoid()
+    addTextOverlay({
+      id,
+      text: 'Sample Text',
+      fontFamily: 'sans-serif',
+      fontSize: 48,
+      color: '#ffffff',
+      x: point.x,
+      y: point.y,
+      trackIndex: Math.max(0, videoTrackCount - 1),
+      startTime: currentTime,
+      endTime: currentTime + 3000,
+      bold: false,
+      italic: false,
+    })
+    setSelectedId(id)
   }
 
   const duration = renderPlan.durationMs
@@ -174,7 +214,7 @@ export default function PreviewPlayer() {
   }, [])
 
   function togglePlay() {
-    if (previewTimelineItems.length === 0) return
+    if (!hasPreviewContent) return
     setIsPlaying(!isPlaying)
   }
 
@@ -197,8 +237,12 @@ export default function PreviewPlayer() {
         ref={viewportWrapRef}
         onMouseMove={onFsMouseMove}
       >
-        <div style={{ ...styles.viewport, ...(isFullscreen ? { aspectRatio: '16/9', height: '100%', width: 'auto', maxWidth: '100%' } : {}) }} ref={viewportRef}>
-          {previewTimelineItems.length === 0 ? (
+        <div
+          style={{ ...styles.viewport, ...(isFullscreen ? { aspectRatio: '16/9', height: '100%', width: 'auto', maxWidth: '100%' } : {}) }}
+          ref={viewportRef}
+          onMouseDown={addTextAtPreviewPoint}
+        >
+          {!hasPreviewContent ? (
             <div style={styles.empty}>Drop clips to the timeline to preview</div>
           ) : (
             <>
@@ -210,6 +254,14 @@ export default function PreviewPlayer() {
               />
               {transformMode && selectedItem && selectedClip && selectedClip.type !== 'audio' && (
                 <TransformOverlay item={selectedItem} viewportEl={viewportRef.current} onUpdate={c => updateTransform(selectedItem.id, c)} />
+              )}
+
+              {visibleSelectedOverlay && (
+                <TextOverlayHandle
+                  overlay={visibleSelectedOverlay}
+                  viewportEl={viewportRef.current}
+                  onUpdate={changes => updateTextOverlay(visibleSelectedOverlay.id, changes)}
+                />
               )}
 
               {focalMode && selectedItem?.kenBurns && (() => {
@@ -322,6 +374,67 @@ export default function PreviewPlayer() {
           >◎</button>
         )}
       </div>
+    </div>
+  )
+}
+
+// Text/title overlay handle
+function TextOverlayHandle({ overlay, viewportEl, onUpdate }: {
+  overlay: TextOverlay
+  viewportEl: HTMLDivElement | null
+  onUpdate: (changes: Partial<TextOverlay>) => void
+}) {
+  const textLines = overlay.text.split('\n')
+  const longestLine = textLines.reduce((max, line) => Math.max(max, line.length), 1)
+  const boxWidth = Math.max(80, longestLine * overlay.fontSize * 0.58)
+  const boxHeight = Math.max(overlay.fontSize * 1.25, textLines.length * overlay.fontSize * 1.25)
+
+  function startMove(e: React.MouseEvent) {
+    const viewport = viewportEl?.getBoundingClientRect()
+    if (!viewport) return
+    e.preventDefault(); e.stopPropagation()
+    const startX = e.clientX
+    const startY = e.clientY
+    const originX = overlay.x
+    const originY = overlay.y
+
+    function onMove(ev: MouseEvent) {
+      onUpdate({
+        x: Math.round(Math.max(0, Math.min(PREVIEW_W, originX + (ev.clientX - startX) / viewport.width * PREVIEW_W))),
+        y: Math.round(Math.max(0, Math.min(PREVIEW_H, originY + (ev.clientY - startY) / viewport.height * PREVIEW_H))),
+      })
+    }
+
+    function onUp() {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
+
+  return (
+    <div
+      data-text-handle
+      style={{
+        position: 'absolute',
+        left: `${overlay.x / PREVIEW_W * 100}%`,
+        top: `${overlay.y / PREVIEW_H * 100}%`,
+        width: `${boxWidth / PREVIEW_W * 100}%`,
+        height: `${boxHeight / PREVIEW_H * 100}%`,
+        minWidth: 28,
+        minHeight: 18,
+        border: '1.5px solid rgba(139,92,246,0.95)',
+        boxShadow: '0 0 0 1px rgba(0,0,0,0.65), inset 0 0 0 1px rgba(255,255,255,0.18)',
+        cursor: 'move',
+        zIndex: 22,
+        pointerEvents: 'all',
+      }}
+      onMouseDown={startMove}
+      title="Drag title"
+    >
+      <div style={{ position: 'absolute', top: -18, left: 0, fontSize: 10, color: '#d7c4ff', background: 'rgba(0,0,0,0.7)', padding: '2px 5px', borderRadius: 3, pointerEvents: 'none' }}>TITLE</div>
     </div>
   )
 }

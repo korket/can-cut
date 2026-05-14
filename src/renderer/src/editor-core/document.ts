@@ -62,6 +62,34 @@ function getThumbnail(state: Pick<EditorDocumentState, 'thumbnail' | 'timelineIt
   return clip?.thumbnail ?? null
 }
 
+function normalizeTextOverlays(overlays: unknown, videoTrackCount: number): TextOverlay[] {
+  if (!Array.isArray(overlays)) return []
+  const defaultTrack = Math.max(0, videoTrackCount - 1)
+
+  return overlays.map((overlay) => {
+    const value = (overlay && typeof overlay === 'object' ? overlay : {}) as Partial<TextOverlay>
+    const trackIndex = Number.isFinite(value.trackIndex)
+      ? Math.max(0, Math.min(videoTrackCount - 1, Number(value.trackIndex)))
+      : defaultTrack
+
+    return {
+      ...value,
+      id: String(value.id ?? ''),
+      text: String(value.text ?? 'Text'),
+      fontFamily: value.fontFamily ?? 'sans-serif',
+      fontSize: Number.isFinite(value.fontSize) ? Number(value.fontSize) : 36,
+      color: value.color ?? '#ffffff',
+      x: Number.isFinite(value.x) ? Number(value.x) : 100,
+      y: Number.isFinite(value.y) ? Number(value.y) : 80,
+      trackIndex,
+      startTime: Number.isFinite(value.startTime) ? Number(value.startTime) : 0,
+      endTime: Number.isFinite(value.endTime) ? Number(value.endTime) : 3000,
+      bold: Boolean(value.bold),
+      italic: Boolean(value.italic),
+    }
+  })
+}
+
 export function createProjectDocument(state: EditorDocumentState): ProjectDocument {
   const activeTimelineId = 'main'
 
@@ -107,6 +135,7 @@ export function getActiveTimeline(document: ProjectDocument): TimelineDocument {
 export function readEditorStateFromProjectData(raw: unknown): EditorDocumentState {
   if (isProjectDocument(raw)) {
     const timeline = getActiveTimeline(raw)
+    const videoTrackCount = raw.settings.videoTrackCount ?? 2
     return {
       id: raw.id,
       name: raw.name,
@@ -116,15 +145,16 @@ export function readEditorStateFromProjectData(raw: unknown): EditorDocumentStat
       clips: raw.media.clips ?? [],
       folders: raw.media.folders ?? [],
       timelineItems: timeline.items ?? [],
-      textOverlays: timeline.textOverlays ?? [],
+      textOverlays: normalizeTextOverlays(timeline.textOverlays, videoTrackCount),
       fps: raw.settings.fps ?? 30,
-      videoTrackCount: raw.settings.videoTrackCount ?? 2,
+      videoTrackCount,
       audioTrackCount: raw.settings.audioTrackCount ?? 2,
       zoom: raw.settings.zoom ?? 100,
     }
   }
 
   const legacy = raw as Record<string, any>
+  const videoTrackCount = legacy?.videoTrackCount ?? 2
   return {
     id: String(legacy?.id ?? ''),
     name: String(legacy?.name ?? 'Untitled'),
@@ -134,9 +164,9 @@ export function readEditorStateFromProjectData(raw: unknown): EditorDocumentStat
     clips: legacy?.clips ?? [],
     folders: legacy?.folders ?? [],
     timelineItems: legacy?.timelineItems ?? [],
-    textOverlays: legacy?.textOverlays ?? [],
+    textOverlays: normalizeTextOverlays(legacy?.textOverlays, videoTrackCount),
     fps: legacy?.fps ?? 30,
-    videoTrackCount: legacy?.videoTrackCount ?? 2,
+    videoTrackCount,
     audioTrackCount: legacy?.audioTrackCount ?? 2,
     zoom: legacy?.zoom ?? 100,
   }

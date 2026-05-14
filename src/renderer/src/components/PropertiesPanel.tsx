@@ -7,11 +7,11 @@ import { hasKeyframeAt, applyKeyframesToTransform, applyKeyframesToEffects } fro
 
 export default function PropertiesPanel() {
   const {
-    selectedId, timelineItems, textOverlays,
+    selectedId, setSelectedId, timelineItems, textOverlays,
     updateTimelineItem, updateTransform, updateEffects, updateAnimation, updateTransition,
     addKeyframe, removeKeyframe,
     updateTextOverlay, removeTextOverlay,
-    clips, currentTime, addTextOverlay, tool,
+    clips, currentTime, addTextOverlay, tool, videoTrackCount,
     defaultTransformEnabled, defaultTransform, setDefaultTransformEnabled, setDefaultTransform, captureDefaultTransform,
   } = useEditorStore()
 
@@ -32,12 +32,15 @@ export default function PropertiesPanel() {
   const removeKf = (property: string) => removeKeyframe(selectedItem!.id, property, clipTime)
 
   function addText() {
+    const id = nanoid()
     addTextOverlay({
-      id: nanoid(), text: 'Sample Text', fontFamily: 'sans-serif',
+      id, text: 'Sample Text', fontFamily: 'sans-serif',
       fontSize: 36, color: '#ffffff', x: 100, y: 80,
+      trackIndex: Math.max(0, videoTrackCount - 1),
       startTime: currentTime, endTime: currentTime + 3000,
       bold: false, italic: false,
     })
+    setSelectedId(id)
   }
 
   const canCapture = !!(selectedItem && selectedClip && selectedClip.type !== 'audio')
@@ -997,6 +1000,9 @@ function TextProps({ overlay, update, onDelete }: {
       <input type="number" value={overlay.x} onChange={e => update({ x: +e.target.value })} style={styles.input} />
       <label style={styles.label}>Position Y</label>
       <input type="number" value={overlay.y} onChange={e => update({ y: +e.target.value })} style={styles.input} />
+
+      <label style={styles.label}>Video Track</label>
+      <input type="number" min={1} value={overlay.trackIndex + 1} onChange={e => update({ trackIndex: Math.max(0, +e.target.value - 1) })} style={styles.input} />
 
       <label style={styles.label}>Start (ms)</label>
       <input type="number" value={overlay.startTime} onChange={e => update({ startTime: +e.target.value })} style={styles.input} />

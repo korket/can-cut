@@ -1,7 +1,7 @@
 import { useRef, useCallback, useEffect, useState, Fragment } from 'react'
 import { useEditorStore } from '../store/useEditorStore'
 import { useShortcutsStore } from '../store/useShortcutsStore'
-import type { TransitionType } from '../types'
+import type { TextOverlay, TransitionType } from '../types'
 import { DEFAULT_TRANSITION, DEFAULT_KEN_BURNS } from '../types'
 import { importAndAddClips } from '../utils/importClip'
 import { nanoid } from '../utils/nanoid'
@@ -33,7 +33,8 @@ function formatRulerTime(ms: number) {
 
 export default function Timeline() {
   const {
-    clips, timelineItems, removeTimelineItem, updateTimelineItem, updateTransition,
+    clips, timelineItems, textOverlays, removeTimelineItem, updateTimelineItem, updateTransition,
+    updateTextOverlay, removeTextOverlay,
     currentTime, setCurrentTime, setIsPlaying,
     tool, zoom, setZoom, getTimelineDuration,
     videoTrackCount, audioTrackCount, addVideoTrack, addAudioTrack,
@@ -72,6 +73,7 @@ export default function Timeline() {
   function clipFitsTrack(clipType: string, idx: number) {
     return isAudioTrack(idx) ? clipType === 'audio' : clipType !== 'audio'
   }
+  function textFitsTrack(idx: number) { return idx >= 0 && idx < videoTrackCount }
 
   // Ruler ticks — second-level major ticks + frame-level minor ticks when zoomed in
   const tickInterval = zoom < 50 ? 10000 : zoom < 120 ? 5000 : zoom < 300 ? 2000 : 1000
@@ -98,6 +100,10 @@ export default function Timeline() {
     for (const item of timelineItems) {
       if (item.id === excludeId) continue
       pts.push(item.startTime, item.startTime + (item.trimEnd - item.trimStart))
+    }
+    for (const overlay of textOverlays) {
+      if (overlay.id === excludeId) continue
+      pts.push(overlay.startTime, overlay.endTime)
     }
     return pts
   }
@@ -243,6 +249,90 @@ export default function Timeline() {
     return () => { window.removeEventListener('mousemove', onResizeMove); window.removeEventListener('mouseup', onResizeUp) }
   }, [onResizeMove, onResizeUp])
 
+  const textDragState = useRef<{ id: string; startX: number; origStart: number; origEnd: number; origTrack: number } | null>(null)
+  const textResizeState = useRef<{ id: string; edge: 'left' | 'right'; startX: number; origStart: number; origEnd: number } | null>(null)
+
+  function onTextMouseDown(e: React.MouseEvent, overlayId: string) {
+    e.preventDefault(); e.stopPropagation()
+    const overlay = useEditorStore.getState().textOverlays.find(o => o.id === overlayId)
+    if (!overlay) return
+    setSelectedId(overlayId)
+    textDragState.current = {
+      id: overlayId,
+      startX: e.clientX,
+      origStart: overlay.startTime,
+      origEnd: overlay.endTime,
+      origTrack: overlay.trackIndex,
+    }
+  }
+
+  function onTextResizeMouseDown(e: React.MouseEvent, overlayId: string, edge: 'left' | 'right') {
+    e.preventDefault(); e.stopPropagation()
+    const overlay = useEditorStore.getState().textOverlays.find(o => o.id === overlayId)
+    if (!overlay) return
+    setSelectedId(overlayId)
+    textResizeState.current = {
+      id: overlayId,
+      edge,
+      startX: e.clientX,
+      origStart: overlay.startTime,
+      origEnd: overlay.endTime,
+    }
+  }
+
+  const onTextMove = useCallback((e: MouseEvent) => {
+    if (!textDragState.current) return
+    const { id, startX, origStart, origEnd, origTrack } = textDragState.current
+    const { fps: curFps } = useEditorStore.getState()
+    const durationMs = Math.max(frameDurationMs(curFps), origEnd - origStart)
+    const rawStart = snapToFrame(Math.max(0, origStart + pxToMs(e.clientX - startX)), curFps)
+    const snappedStart = trySnap(rawStart, id)
+    const trackEl = document.elementFromPoint(e.clientX, e.clientY)?.closest('[data-track]') as HTMLElement | null
+    const candidate = trackEl ? parseInt(trackEl.dataset.track!) : origTrack
+    const newTrack = textFitsTrack(candidate) ? candidate : origTrack
+
+    updateTextOverlay(id, {
+      startTime: snappedStart,
+      endTime: snappedStart + durationMs,
+      trackIndex: newTrack,
+    })
+  }, [pxPerMs, snapEnabled, currentTime, videoTrackCount, textOverlays])
+
+  const onTextResizeMove = useCallback((e: MouseEvent) => {
+    if (!textResizeState.current) return
+    const { id, edge, startX, origStart, origEnd } = textResizeState.current
+    const { fps: curFps } = useEditorStore.getState()
+    const minDur = frameDurationMs(curFps)
+    const dx = pxToMs(e.clientX - startX)
+
+    if (edge === 'left') {
+      const rawStart = snapToFrame(Math.max(0, Math.min(origEnd - minDur, origStart + dx)), curFps)
+      const snappedStart = Math.min(origEnd - minDur, trySnap(rawStart, id))
+      updateTextOverlay(id, { startTime: snappedStart })
+    } else {
+      const rawEnd = snapToFrame(Math.max(origStart + minDur, origEnd + dx), curFps)
+      const snappedEnd = Math.max(origStart + minDur, trySnap(rawEnd, id))
+      updateTextOverlay(id, { endTime: snappedEnd })
+    }
+  }, [pxPerMs, snapEnabled, currentTime])
+
+  const onTextUp = useCallback(() => {
+    textDragState.current = null
+    textResizeState.current = null
+    setSnapIndicator(null)
+  }, [])
+
+  useEffect(() => {
+    window.addEventListener('mousemove', onTextMove)
+    window.addEventListener('mousemove', onTextResizeMove)
+    window.addEventListener('mouseup', onTextUp)
+    return () => {
+      window.removeEventListener('mousemove', onTextMove)
+      window.removeEventListener('mousemove', onTextResizeMove)
+      window.removeEventListener('mouseup', onTextUp)
+    }
+  }, [onTextMove, onTextResizeMove, onTextUp])
+
   // ── Scrubbing ──────────────────────────────────────────────────────────────
   const scrubbing = useRef(false)
   const pendingScrubX = useRef<number | null>(null)
@@ -262,7 +352,7 @@ export default function Timeline() {
     const x = clientX - rect.left + containerRef.current.scrollLeft
     const raw = Math.max(0, Math.min(pxToMs(x), getTimelineDuration()))
 
-    const { timelineItems: items, fps: currentFps } = useEditorStore.getState()
+    const { timelineItems: items, textOverlays: overlays, fps: currentFps } = useEditorStore.getState()
     let snapped = raw
     if (snapEnabled) {
       const threshMs = pxToMs(SNAP_PX)
@@ -270,6 +360,12 @@ export default function Timeline() {
       for (const item of items) {
         const end = item.startTime + (item.trimEnd - item.trimStart)
         for (const pt of [0, item.startTime, end]) {
+          const d = Math.abs(pt - raw)
+          if (d < bestDist) { bestDist = d; snapped = pt }
+        }
+      }
+      for (const overlay of overlays) {
+        for (const pt of [overlay.startTime, overlay.endTime]) {
           const d = Math.abs(pt - raw)
           if (d < bestDist) { bestDist = d; snapped = pt }
         }
@@ -536,12 +632,13 @@ export default function Timeline() {
               {Array.from({ length: videoTrackCount }).map((_, i) => {
                 const trackIdx = videoTrackCount - 1 - i
                 return (
-                  <TrackRow key={trackIdx} trackIdx={trackIdx} trackHeight={getTrackH(trackIdx)} clips={clips} timelineItems={timelineItems} msToPx={msToPx}
+                  <TrackRow key={trackIdx} trackIdx={trackIdx} trackHeight={getTrackH(trackIdx)} clips={clips} timelineItems={timelineItems} textOverlays={textOverlays} msToPx={msToPx}
                     dragOverTrack={dragOverTrack} selectedId={selectedId} setSelectedId={setSelectedId} onClipMouseDown={onClipMouseDown}
                     onResizeMouseDown={onResizeMouseDown} removeTimelineItem={removeTimelineItem}
+                    onTextMouseDown={onTextMouseDown} onTextResizeMouseDown={onTextResizeMouseDown} removeTextOverlay={removeTextOverlay}
                     handleTrackDrop={handleTrackDrop} handleTrackDragOver={handleTrackDragOver}
                     handleTrackDragLeave={handleTrackDragLeave}
-                    updateTransition={updateTransition} onTransitionChipClick={openTransitionPopup} />
+                    updateTransition={updateTransition} onTransitionChipClick={openTransitionPopup} videoTrackCount={videoTrackCount} />
                 )
               })}
 
@@ -550,12 +647,13 @@ export default function Timeline() {
                 <span style={{ ...styles.sectionDividerLabel, color: '#2a8abf' }}>AUDIO</span>
               </div>
               {Array.from({ length: audioTrackCount }).map((_, i) => (
-                <TrackRow key={i} trackIdx={videoTrackCount + i} trackHeight={getTrackH(videoTrackCount + i)} clips={clips} timelineItems={timelineItems} msToPx={msToPx}
+                <TrackRow key={i} trackIdx={videoTrackCount + i} trackHeight={getTrackH(videoTrackCount + i)} clips={clips} timelineItems={timelineItems} textOverlays={textOverlays} msToPx={msToPx}
                   dragOverTrack={dragOverTrack} selectedId={selectedId} setSelectedId={setSelectedId} onClipMouseDown={onClipMouseDown}
                   onResizeMouseDown={onResizeMouseDown} removeTimelineItem={removeTimelineItem}
+                  onTextMouseDown={onTextMouseDown} onTextResizeMouseDown={onTextResizeMouseDown} removeTextOverlay={removeTextOverlay}
                   handleTrackDrop={handleTrackDrop} handleTrackDragOver={handleTrackDragOver}
                   handleTrackDragLeave={handleTrackDragLeave}
-                  updateTransition={updateTransition} onTransitionChipClick={openTransitionPopup} />
+                  updateTransition={updateTransition} onTransitionChipClick={openTransitionPopup} videoTrackCount={videoTrackCount} />
               ))}
 
               {/* Snap indicator */}
@@ -779,11 +877,17 @@ function readWaveformRange(channels: WaveformLevel['channels'], lo: number, hi: 
 }
 
 // ── TrackRow ────────────────────────────────────────────────────────────────
+function textOverlayTrackIndex(overlay: TextOverlay, videoTrackCount: number): number {
+  if (!Number.isFinite(overlay.trackIndex)) return Math.max(0, videoTrackCount - 1)
+  return Math.max(0, Math.min(videoTrackCount - 1, overlay.trackIndex))
+}
+
 interface TrackRowProps {
   trackIdx: number
   trackHeight: number
   clips: any[]
   timelineItems: any[]
+  textOverlays: TextOverlay[]
   msToPx: (ms: number) => number
   dragOverTrack: number | null
   selectedId: string | null
@@ -791,14 +895,18 @@ interface TrackRowProps {
   onClipMouseDown: (e: React.MouseEvent, id: string) => void
   onResizeMouseDown: (e: React.MouseEvent, id: string, edge: 'left' | 'right') => void
   removeTimelineItem: (id: string) => void
+  onTextMouseDown: (e: React.MouseEvent, id: string) => void
+  onTextResizeMouseDown: (e: React.MouseEvent, id: string, edge: 'left' | 'right') => void
+  removeTextOverlay: (id: string) => void
   handleTrackDrop: (e: React.DragEvent, idx: number) => void
   handleTrackDragOver: (e: React.DragEvent, idx: number) => void
   handleTrackDragLeave: (e: React.DragEvent) => void
   updateTransition: (id: string, changes: any) => void
   onTransitionChipClick: (itemId: string, rect: DOMRect) => void
+  videoTrackCount: number
 }
 
-function TrackRow({ trackIdx, trackHeight, clips, timelineItems, msToPx, dragOverTrack, selectedId, setSelectedId, onClipMouseDown, onResizeMouseDown, removeTimelineItem, handleTrackDrop, handleTrackDragOver, handleTrackDragLeave, updateTransition, onTransitionChipClick }: TrackRowProps) {
+function TrackRow({ trackIdx, trackHeight, clips, timelineItems, textOverlays, msToPx, dragOverTrack, selectedId, setSelectedId, onClipMouseDown, onResizeMouseDown, removeTimelineItem, onTextMouseDown, onTextResizeMouseDown, removeTextOverlay, handleTrackDrop, handleTrackDragOver, handleTrackDragLeave, updateTransition, onTransitionChipClick, videoTrackCount }: TrackRowProps) {
   return (
     <div
       data-track={trackIdx}
@@ -903,6 +1011,34 @@ function TrackRow({ trackIdx, trackHeight, clips, timelineItems, msToPx, dragOve
           </Fragment>
         )
       })}
+      {trackIdx < videoTrackCount && textOverlays
+        .filter(overlay => textOverlayTrackIndex(overlay, videoTrackCount) === trackIdx)
+        .map(overlay => {
+          const width = Math.max(msToPx(overlay.endTime - overlay.startTime), 18)
+          const isSelected = selectedId === overlay.id
+          return (
+            <div
+              key={overlay.id}
+              style={{
+                ...styles.clip,
+                ...styles.textClip,
+                left: msToPx(overlay.startTime),
+                width,
+                height: trackHeight - 6,
+                outline: isSelected ? '2px solid #fff' : 'none',
+                outlineOffset: -1,
+              }}
+              onMouseDown={e => onTextMouseDown(e, overlay.id)}
+              title={overlay.text}
+            >
+              <div style={styles.resizeL} onMouseDown={e => onTextResizeMouseDown(e, overlay.id, 'left')} />
+              <span style={styles.textClipIcon}>T</span>
+              <span style={styles.clipLabel}>{overlay.text || 'Text'}</span>
+              <div style={styles.resizeR} onMouseDown={e => onTextResizeMouseDown(e, overlay.id, 'right')} />
+              <button style={styles.clipDel} onMouseDown={e => e.stopPropagation()} onClick={() => removeTextOverlay(overlay.id)}>×</button>
+            </div>
+          )
+        })}
     </div>
   )
 }
@@ -949,6 +1085,8 @@ const styles: Record<string, React.CSSProperties> = {
   track:        { height: TRACK_HEIGHT, borderBottom: '1px solid #1e1e1e', position: 'relative', background: '#181818', transition: 'background 0.1s' },
   trackDragging:{ background: 'rgba(42,191,90,0.07)', outline: '2px dashed #2abf5a', outlineOffset: -2 },
   clip:         { position: 'absolute', top: 3, height: TRACK_HEIGHT - 6, borderRadius: 4, border: '1px solid', overflow: 'hidden', display: 'flex', alignItems: 'center', userSelect: 'none', cursor: 'grab', minWidth: 4 },
+  textClip:     { background: '#26143c', borderColor: '#8b5cf6', boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.05)' },
+  textClipIcon: { position: 'relative', zIndex: 2, width: 22, color: '#d7c4ff', fontSize: 13, fontWeight: 800, textAlign: 'center', textShadow: '0 1px 3px rgba(0,0,0,0.8)', flexShrink: 0 },
   clipLabel:    { fontSize: 12, color: '#fff', paddingLeft: 9, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, pointerEvents: 'none', position: 'relative', zIndex: 2, textShadow: '0 1px 3px rgba(0,0,0,0.9), 0 0 8px rgba(0,0,0,0.8)' },
   clipDel:      { position: 'absolute', top: 1, right: 1, background: 'transparent', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: '0 2px', zIndex: 4 },
   resizeL:      { position: 'absolute', left: 0, top: 0, width: 5, height: '100%', cursor: 'ew-resize', background: 'rgba(255,255,255,0.1)', zIndex: 3 },

@@ -262,14 +262,16 @@ export const useEditorStore = create<EditorStore>((set, get) => {
     addAudioTrack: () => commit('Add audio track', (s) => ({ audioTrackCount: s.audioTrackCount + 1 })),
 
     getTimelineDuration: () => {
-      const { timelineItems, clips } = get()
-      if (timelineItems.length === 0) return 0
+      const { timelineItems, clips, textOverlays } = get()
       let max = 0
       for (const item of timelineItems) {
         const clip = clips.find((c) => c.id === item.clipId)
         if (!clip) continue
         const end = item.startTime + (item.trimEnd - item.trimStart)
         if (end > max) max = end
+      }
+      for (const overlay of textOverlays) {
+        if (overlay.endTime > max) max = overlay.endTime
       }
       return max
     }

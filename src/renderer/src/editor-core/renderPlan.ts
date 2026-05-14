@@ -100,6 +100,7 @@ function toAsset(clip: MediaClip): RenderAsset {
 export function createRenderPlan(input: CreateRenderPlanInput): RenderPlan {
   const videoLayers: VideoRenderLayer[] = []
   const audioLayers: AudioRenderLayer[] = []
+  const textLayers = [...input.textOverlays].sort((a, b) => a.trackIndex - b.trackIndex || a.startTime - b.startTime)
 
   for (const item of input.timelineItems) {
     const clip = input.clips.find((candidate) => candidate.id === item.clipId)
@@ -134,10 +135,14 @@ export function createRenderPlan(input: CreateRenderPlanInput): RenderPlan {
     schemaVersion: 1,
     fps: input.fps,
     resolution: parseResolution(input.resolution),
-    durationMs: input.duration ?? getTimelineDuration(input.timelineItems),
+    durationMs: input.duration ?? Math.max(
+      getTimelineDuration(input.timelineItems),
+      ...textLayers.map((layer) => layer.endTime),
+      0,
+    ),
     videoLayers: videoLayers.sort((a, b) => a.trackIndex - b.trackIndex || a.startTime - b.startTime),
     audioLayers: audioLayers.sort((a, b) => a.trackIndex - b.trackIndex || a.startTime - b.startTime),
-    textLayers: [...input.textOverlays],
+    textLayers,
   }
 }
 

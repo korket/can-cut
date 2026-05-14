@@ -382,6 +382,35 @@ function applyWipeClip(
 
 // ── Per-frame render ──────────────────────────────────────────────────────
 
+function isTextOverlayActiveAt(overlay: TextOverlay, timeMs: number): boolean {
+  return timeMs >= overlay.startTime && timeMs < overlay.endTime
+}
+
+function drawTextOverlay(ctx: CanvasRenderingContext2D, overlay: TextOverlay): void {
+  ctx.save()
+  ctx.setTransform(1, 0, 0, 1, 0, 0)
+  ctx.filter = 'none'
+  ctx.globalAlpha = 1
+  ctx.font = [
+    overlay.italic ? 'italic' : '',
+    overlay.bold   ? 'bold'   : '',
+    `${overlay.fontSize}px`,
+    overlay.fontFamily || 'sans-serif',
+  ].filter(Boolean).join(' ')
+  ctx.textBaseline = 'top'
+  ctx.fillStyle = overlay.color
+  ctx.shadowColor   = 'rgba(0,0,0,0.8)'
+  ctx.shadowBlur    = 4
+  ctx.shadowOffsetX = 0
+  ctx.shadowOffsetY = 1
+
+  const lineHeight = overlay.fontSize * 1.2
+  for (const [index, line] of overlay.text.split('\n').entries()) {
+    ctx.fillText(line, overlay.x, overlay.y + index * lineHeight)
+  }
+  ctx.restore()
+}
+
 export async function renderCanvasFrame(
   ctx: CanvasRenderingContext2D, W: number, H: number, timeMs: number,
   timelineItems: TimelineItem[], clips: MediaClip[], textOverlays: TextOverlay[],
@@ -396,14 +425,27 @@ export async function renderCanvasFrame(
   ctx.fillStyle = '#000'
   ctx.fillRect(0, 0, W, H)
 
-  const layers = timelineItems
+  const mediaLayers = timelineItems
     .filter(item => {
       const c = clips.find(cl => cl.id === item.clipId)
       return c && c.type !== 'audio' && isItemActiveAt(item, timeMs)
     })
-    .sort((a, b) => a.trackIndex - b.trackIndex)
+    .map(item => ({ kind: 'media' as const, trackIndex: item.trackIndex, startTime: item.startTime, item }))
 
-  for (const item of layers) {
+  const textLayers = textOverlays
+    .filter(overlay => isTextOverlayActiveAt(overlay, timeMs))
+    .map(overlay => ({ kind: 'text' as const, trackIndex: overlay.trackIndex, startTime: overlay.startTime, overlay }))
+
+  const visualLayers = [...mediaLayers, ...textLayers]
+    .sort((a, b) => a.trackIndex - b.trackIndex || a.startTime - b.startTime)
+
+  for (const visualLayer of visualLayers) {
+    if (visualLayer.kind === 'text') {
+      drawTextOverlay(ctx, visualLayer.overlay)
+      continue
+    }
+
+    const item = visualLayer.item
     const clip = clips.find(c => c.id === item.clipId)!
     const clipTime = timeMs - item.startTime
 
@@ -469,31 +511,6 @@ export async function renderCanvasFrame(
     }
 
     await drawLayer(ctx, W, H, item, clip, clipTime, videoEls, imageEls, 1, undefined, options)
-  }
-
-  // ── Text overlays ─────────────────────────────────────────────────────────
-  for (const ov of textOverlays) {
-    if (timeMs >= ov.startTime && timeMs < ov.endTime) {
-      ctx.save()
-      ctx.setTransform(1, 0, 0, 1, 0, 0)
-      ctx.filter = 'none'
-      ctx.globalAlpha = 1
-      ctx.font = [
-        ov.italic ? 'italic' : '',
-        ov.bold   ? 'bold'   : '',
-        `${ov.fontSize}px`,
-        ov.fontFamily || 'sans-serif',
-      ].filter(Boolean).join(' ')
-      ctx.textBaseline = 'top'
-      ctx.fillStyle = ov.color
-      // Mirror preview's textShadow: '0 1px 4px rgba(0,0,0,0.8)'
-      ctx.shadowColor   = 'rgba(0,0,0,0.8)'
-      ctx.shadowBlur    = 4
-      ctx.shadowOffsetX = 0
-      ctx.shadowOffsetY = 1
-      ctx.fillText(ov.text, ov.x, ov.y)
-      ctx.restore()
-    }
   }
 }
 
