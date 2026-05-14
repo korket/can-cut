@@ -24,6 +24,7 @@ const RULER_HEIGHT = 24
 const SECTION_H = 22
 const HEADER_W = 72
 const SNAP_PX = 8
+const PLAYHEAD_SCROLL_MARGIN_PX = 72
 
 function formatRulerTime(ms: number) {
   const s = Math.floor(ms / 1000)
@@ -340,9 +341,10 @@ export default function Timeline() {
 
   function startScrub(e: React.MouseEvent) {
     e.preventDefault()
+    e.stopPropagation()
     scrubbing.current = true
     setIsPlaying(false)
-    document.body.style.cursor = 'pointer'
+    document.body.style.cursor = 'ew-resize'
     seekToX(e.clientX)
   }
 
@@ -414,6 +416,26 @@ export default function Timeline() {
       if (scrubRaf.current != null) cancelAnimationFrame(scrubRaf.current)
     }
   }, [onScrubMove, onScrubUp])
+
+  const keepPlayheadInView = useCallback(() => {
+    const tracks = containerRef.current
+    if (!tracks) return
+
+    const x = msToPx(useEditorStore.getState().currentTime)
+    const left = tracks.scrollLeft
+    const right = left + tracks.clientWidth
+    const margin = Math.min(PLAYHEAD_SCROLL_MARGIN_PX, Math.max(16, tracks.clientWidth / 4))
+
+    if (x < left + margin) {
+      tracks.scrollLeft = Math.max(0, x - margin)
+    } else if (x > right - margin) {
+      tracks.scrollLeft = Math.max(0, x - tracks.clientWidth + margin)
+    }
+  }, [pxPerMs])
+
+  useEffect(() => {
+    keepPlayheadInView()
+  }, [currentTime, zoom, keepPlayheadInView])
 
   // ── Scroll / zoom via wheel ────────────────────────────────────────────────
   useEffect(() => {
@@ -615,15 +637,16 @@ export default function Timeline() {
                   <span style={styles.tickLabel}>{formatRulerTime(t)}</span>
                 </div>
               ))}
-              <div style={{ position: 'absolute', top: 0, height: RULER_HEIGHT, left: playheadLeft - 1, width: 2, background: '#e63950', zIndex: 10, pointerEvents: 'none' }}>
-                <div style={{ position: 'absolute', bottom: 0, left: -5, width: 0, height: 0, borderLeft: '6px solid transparent', borderRight: '6px solid transparent', borderTop: '10px solid #e63950' }} />
+              <div style={{ ...styles.playheadRuler, left: playheadLeft - 1 }} onMouseDown={startScrub}>
+                <div style={styles.playheadRulerHit} />
+                <div style={styles.playheadRulerHandle} />
               </div>
             </div>
           </div>
 
           {/* Tracks — scrolls both axes */}
           <div style={styles.tracksScroll} ref={containerRef}>
-            <div style={{ position: 'relative', width: msToPx(duration), minWidth: '100%' }}>
+            <div style={{ position: 'relative', width: msToPx(duration), minWidth: '100%' }} onMouseDown={startScrub}>
 
               {/* Video tracks */}
               <div style={styles.sectionDivider}>
@@ -662,7 +685,8 @@ export default function Timeline() {
               )}
 
               {/* Playhead */}
-              <div style={{ position: 'absolute', top: 0, left: playheadLeft - 1, width: 2, height: totalHeight, background: '#e63950', zIndex: 10, pointerEvents: 'none' }} />
+              <div style={{ ...styles.playheadTrackHit, left: playheadLeft - 7, height: totalHeight }} onMouseDown={startScrub} />
+              <div style={{ ...styles.playheadTrackLine, left: playheadLeft - 1, height: totalHeight }} />
             </div>
           </div>
         </div>
@@ -1108,6 +1132,11 @@ const styles: Record<string, React.CSSProperties> = {
   tick:         { position: 'absolute', top: 0, display: 'flex', flexDirection: 'column', alignItems: 'center' },
   tickLine:     { width: 1, height: 8, background: '#3a3a3a' },
   tickLabel:    { fontSize: 11, color: '#555', marginTop: 1, whiteSpace: 'nowrap', userSelect: 'none' },
+  playheadRuler: { position: 'absolute', top: 0, height: RULER_HEIGHT, width: 2, background: '#e63950', zIndex: 12, cursor: 'ew-resize' },
+  playheadRulerHit: { position: 'absolute', top: 0, bottom: 0, left: -7, width: 16 },
+  playheadRulerHandle: { position: 'absolute', bottom: 0, left: -5, width: 0, height: 0, borderLeft: '6px solid transparent', borderRight: '6px solid transparent', borderTop: '10px solid #e63950', filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.7))' },
+  playheadTrackHit: { position: 'absolute', top: 0, width: 14, zIndex: 13, cursor: 'ew-resize', background: 'transparent' },
+  playheadTrackLine: { position: 'absolute', top: 0, width: 2, background: '#e63950', zIndex: 12, pointerEvents: 'none', boxShadow: '0 0 0 1px rgba(0,0,0,0.35)' },
   sectionDivider:      { height: SECTION_H, background: '#0e0e0e', borderBottom: '1px solid #222', display: 'flex', alignItems: 'center', paddingLeft: 10 },
   sectionDividerAudio: { borderTop: '2px solid #252525' },
   sectionDividerLabel: { fontSize: 11, fontWeight: 700, letterSpacing: 1, color: '#2abf5a', opacity: 0.4 },

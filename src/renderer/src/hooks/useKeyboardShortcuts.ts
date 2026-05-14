@@ -27,7 +27,7 @@ export function useKeyboardShortcuts(onExport: () => void) {
 
       if (matchesShortcut(e, sc('play_pause'))) {
         e.preventDefault()
-        if (store.timelineItems.length > 0) store.setIsPlaying(!store.isPlaying)
+        if (store.getTimelineDuration() > 0) store.setIsPlaying(!store.isPlaying)
 
       } else if (matchesShortcut(e, sc('step_back'))) {
         e.preventDefault()
