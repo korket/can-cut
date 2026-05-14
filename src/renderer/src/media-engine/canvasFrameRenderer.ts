@@ -386,6 +386,44 @@ function isTextOverlayActiveAt(overlay: TextOverlay, timeMs: number): boolean {
   return timeMs >= overlay.startTime && timeMs < overlay.endTime
 }
 
+const CSS_GENERIC_FONT_FAMILIES = new Set([
+  'serif',
+  'sans-serif',
+  'monospace',
+  'cursive',
+  'fantasy',
+  'system-ui',
+  'ui-serif',
+  'ui-sans-serif',
+  'ui-monospace',
+  'ui-rounded',
+  'emoji',
+  'math',
+  'fangsong',
+])
+
+function formatCanvasFontFamily(fontFamily: string | undefined): string {
+  const raw = (fontFamily || 'sans-serif').trim()
+  if (!raw) return 'sans-serif'
+
+  return raw.split(',')
+    .map(part => {
+      const family = part.trim()
+      if (!family) return ''
+      const lower = family.toLowerCase()
+      if (
+        CSS_GENERIC_FONT_FAMILIES.has(lower) ||
+        (family.startsWith('"') && family.endsWith('"')) ||
+        (family.startsWith("'") && family.endsWith("'"))
+      ) {
+        return family
+      }
+      return `"${family.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
+    })
+    .filter(Boolean)
+    .join(', ') || 'sans-serif'
+}
+
 function drawRawText(
   ctx: DrawCtx,
   overlay: TextOverlay,
@@ -395,7 +433,7 @@ function drawRawText(
     overlay.italic ? 'italic' : '',
     overlay.bold   ? 'bold'   : '',
     `${overlay.fontSize}px`,
-    overlay.fontFamily || 'sans-serif',
+    formatCanvasFontFamily(overlay.fontFamily),
   ].filter(Boolean).join(' ')
   ctx.textBaseline = 'top'
   ctx.fillStyle = overlay.color

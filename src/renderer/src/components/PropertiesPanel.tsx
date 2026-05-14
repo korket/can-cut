@@ -1019,18 +1019,75 @@ function AnimationSection({ animation: a, clipDuration, update, flat }: {
 }
 
 // ── Text overlay properties ───────────────────────────────────────────────────
+const TITLE_FONT_OPTIONS = [
+  { label: 'Sans Serif', value: 'sans-serif' },
+  { label: 'Serif', value: 'serif' },
+  { label: 'Monospace', value: 'monospace' },
+  { label: 'Arial', value: 'Arial' },
+  { label: 'Arial Black', value: 'Arial Black' },
+  { label: 'Aptos', value: 'Aptos' },
+  { label: 'Calibri', value: 'Calibri' },
+  { label: 'Cambria', value: 'Cambria' },
+  { label: 'Consolas', value: 'Consolas' },
+  { label: 'Georgia', value: 'Georgia' },
+  { label: 'Impact', value: 'Impact' },
+  { label: 'Segoe UI', value: 'Segoe UI' },
+  { label: 'Tahoma', value: 'Tahoma' },
+  { label: 'Times New Roman', value: 'Times New Roman' },
+  { label: 'Trebuchet MS', value: 'Trebuchet MS' },
+  { label: 'Verdana', value: 'Verdana' },
+]
+
 function TextProps({ overlay, update }: {
   overlay: TextOverlay
   update: (c: Partial<TextOverlay>) => void
 }) {
+  const fontFamily = overlay.fontFamily || 'sans-serif'
+  const selectedPreset = TITLE_FONT_OPTIONS.some(option => option.value === fontFamily)
+    ? fontFamily
+    : '__custom'
+  const [showCustomFont, setShowCustomFont] = useState(selectedPreset === '__custom')
+
+  useEffect(() => {
+    setShowCustomFont(selectedPreset === '__custom')
+  }, [overlay.id, selectedPreset])
+
   return (
     <div style={styles.section}>
       <div style={styles.sectionTitle}>Text</div>
       <label style={styles.label}>Content</label>
       <textarea style={styles.textarea} value={overlay.text} onChange={e => update({ text: e.target.value })} rows={2} />
 
-      <label style={styles.label}>Font Family</label>
-      <input value={overlay.fontFamily} onChange={e => update({ fontFamily: e.target.value })} style={styles.input} />
+      <label style={styles.label}>Font</label>
+      <select
+        value={showCustomFont ? '__custom' : selectedPreset}
+        onChange={e => {
+          if (e.target.value === '__custom') {
+            setShowCustomFont(true)
+          } else {
+            setShowCustomFont(false)
+            update({ fontFamily: e.target.value })
+          }
+        }}
+        style={styles.input}
+      >
+        {TITLE_FONT_OPTIONS.map(option => (
+          <option key={option.value} value={option.value}>{option.label}</option>
+        ))}
+        <option value="__custom">Custom...</option>
+      </select>
+
+      {showCustomFont && (
+        <>
+          <label style={styles.label}>Custom Font Family</label>
+          <input
+            value={fontFamily}
+            onChange={e => update({ fontFamily: e.target.value || 'sans-serif' })}
+            placeholder="Installed font family"
+            style={styles.input}
+          />
+        </>
+      )}
 
       <label style={styles.label}>Font Size</label>
       <div style={styles.row}>
