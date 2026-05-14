@@ -1,11 +1,11 @@
 import { useRef, useCallback, useEffect, useLayoutEffect, useState, Fragment } from 'react'
 import { useEditorStore } from '../store/useEditorStore'
 import { useShortcutsStore } from '../store/useShortcutsStore'
-import type { TransitionType } from '../types'
+import type { TextOverlay, TransitionType } from '../types'
 import { DEFAULT_TRANSITION, DEFAULT_KEN_BURNS } from '../types'
 import { importAndAddClips } from '../utils/importClip'
 import { nanoid } from '../utils/nanoid'
-import { getWaveform } from '../utils/waveform'
+import { getWaveform, selectWaveformLevel, type WaveformData, type WaveformLevel } from '../utils/waveform'
 import { snapToFrame, frameDurationMs } from '../utils/frame'
 import { allKeyframeTimes } from '../utils/keyframes'
 
@@ -24,6 +24,7 @@ const RULER_HEIGHT = 24
 const SECTION_H = 22
 const HEADER_W = 72
 const SNAP_PX = 8
+const PLAYHEAD_SCROLL_MARGIN_PX = 72
 
 function formatRulerTime(ms: number) {
   const s = Math.floor(ms / 1000)
@@ -33,7 +34,8 @@ function formatRulerTime(ms: number) {
 
 export default function Timeline() {
   const {
-    clips, timelineItems, removeTimelineItem, updateTimelineItem, updateTransition,
+    clips, timelineItems, textOverlays, removeTimelineItem, updateTimelineItem, updateTransition,
+    updateTextOverlay, removeTextOverlay,
     currentTime, setCurrentTime, setIsPlaying,
     tool, zoom, setZoom, getTimelineDuration,
     videoTrackCount, audioTrackCount, addVideoTrack, addAudioTrack,
@@ -92,6 +94,7 @@ export default function Timeline() {
   function clipFitsTrack(clipType: string, idx: number) {
     return isAudioTrack(idx) ? clipType === 'audio' : clipType !== 'audio'
   }
+  function textFitsTrack(idx: number) { return idx >= 0 && idx < videoTrackCount }
 
   // Ruler ticks — second-level major ticks + frame-level minor ticks when zoomed in
   const tickInterval = zoom < 50 ? 10000 : zoom < 120 ? 5000 : zoom < 300 ? 2000 : 1000
@@ -118,6 +121,10 @@ export default function Timeline() {
     for (const item of timelineItems) {
       if (item.id === excludeId) continue
       pts.push(item.startTime, item.startTime + (item.trimEnd - item.trimStart))
+    }
+    for (const overlay of textOverlays) {
+      if (overlay.id === excludeId) continue
+      pts.push(overlay.startTime, overlay.endTime)
     }
     return pts
   }
@@ -263,14 +270,101 @@ export default function Timeline() {
     return () => { window.removeEventListener('mousemove', onResizeMove); window.removeEventListener('mouseup', onResizeUp) }
   }, [onResizeMove, onResizeUp])
 
+  const textDragState = useRef<{ id: string; startX: number; origStart: number; origEnd: number; origTrack: number } | null>(null)
+  const textResizeState = useRef<{ id: string; edge: 'left' | 'right'; startX: number; origStart: number; origEnd: number } | null>(null)
+
+  function onTextMouseDown(e: React.MouseEvent, overlayId: string) {
+    e.preventDefault(); e.stopPropagation()
+    const overlay = useEditorStore.getState().textOverlays.find(o => o.id === overlayId)
+    if (!overlay) return
+    setSelectedId(overlayId)
+    textDragState.current = {
+      id: overlayId,
+      startX: e.clientX,
+      origStart: overlay.startTime,
+      origEnd: overlay.endTime,
+      origTrack: overlay.trackIndex,
+    }
+  }
+
+  function onTextResizeMouseDown(e: React.MouseEvent, overlayId: string, edge: 'left' | 'right') {
+    e.preventDefault(); e.stopPropagation()
+    const overlay = useEditorStore.getState().textOverlays.find(o => o.id === overlayId)
+    if (!overlay) return
+    setSelectedId(overlayId)
+    textResizeState.current = {
+      id: overlayId,
+      edge,
+      startX: e.clientX,
+      origStart: overlay.startTime,
+      origEnd: overlay.endTime,
+    }
+  }
+
+  const onTextMove = useCallback((e: MouseEvent) => {
+    if (!textDragState.current) return
+    const { id, startX, origStart, origEnd, origTrack } = textDragState.current
+    const { fps: curFps } = useEditorStore.getState()
+    const durationMs = Math.max(frameDurationMs(curFps), origEnd - origStart)
+    const rawStart = snapToFrame(Math.max(0, origStart + pxToMs(e.clientX - startX)), curFps)
+    const snappedStart = trySnap(rawStart, id)
+    const trackEl = document.elementFromPoint(e.clientX, e.clientY)?.closest('[data-track]') as HTMLElement | null
+    const candidate = trackEl ? parseInt(trackEl.dataset.track!) : origTrack
+    const newTrack = textFitsTrack(candidate) ? candidate : origTrack
+
+    updateTextOverlay(id, {
+      startTime: snappedStart,
+      endTime: snappedStart + durationMs,
+      trackIndex: newTrack,
+    })
+  }, [pxPerMs, snapEnabled, currentTime, videoTrackCount, textOverlays])
+
+  const onTextResizeMove = useCallback((e: MouseEvent) => {
+    if (!textResizeState.current) return
+    const { id, edge, startX, origStart, origEnd } = textResizeState.current
+    const { fps: curFps } = useEditorStore.getState()
+    const minDur = frameDurationMs(curFps)
+    const dx = pxToMs(e.clientX - startX)
+
+    if (edge === 'left') {
+      const rawStart = snapToFrame(Math.max(0, Math.min(origEnd - minDur, origStart + dx)), curFps)
+      const snappedStart = Math.min(origEnd - minDur, trySnap(rawStart, id))
+      updateTextOverlay(id, { startTime: snappedStart })
+    } else {
+      const rawEnd = snapToFrame(Math.max(origStart + minDur, origEnd + dx), curFps)
+      const snappedEnd = Math.max(origStart + minDur, trySnap(rawEnd, id))
+      updateTextOverlay(id, { endTime: snappedEnd })
+    }
+  }, [pxPerMs, snapEnabled, currentTime])
+
+  const onTextUp = useCallback(() => {
+    textDragState.current = null
+    textResizeState.current = null
+    setSnapIndicator(null)
+  }, [])
+
+  useEffect(() => {
+    window.addEventListener('mousemove', onTextMove)
+    window.addEventListener('mousemove', onTextResizeMove)
+    window.addEventListener('mouseup', onTextUp)
+    return () => {
+      window.removeEventListener('mousemove', onTextMove)
+      window.removeEventListener('mousemove', onTextResizeMove)
+      window.removeEventListener('mouseup', onTextUp)
+    }
+  }, [onTextMove, onTextResizeMove, onTextUp])
+
   // ── Scrubbing ──────────────────────────────────────────────────────────────
   const scrubbing = useRef(false)
+  const pendingScrubX = useRef<number | null>(null)
+  const scrubRaf = useRef<number | null>(null)
 
   function startScrub(e: React.MouseEvent) {
     e.preventDefault()
+    e.stopPropagation()
     scrubbing.current = true
     setIsPlaying(false)
-    document.body.style.cursor = 'pointer'
+    document.body.style.cursor = 'ew-resize'
     seekToX(e.clientX)
   }
 
@@ -280,7 +374,7 @@ export default function Timeline() {
     const x = clientX - rect.left + containerRef.current.scrollLeft
     const raw = Math.max(0, Math.min(pxToMs(x), getTimelineDuration()))
 
-    const { timelineItems: items, fps: currentFps } = useEditorStore.getState()
+    const { timelineItems: items, textOverlays: overlays, fps: currentFps } = useEditorStore.getState()
     let snapped = raw
     if (snapEnabled) {
       const threshMs = pxToMs(SNAP_PX)
@@ -292,35 +386,88 @@ export default function Timeline() {
           if (d < bestDist) { bestDist = d; snapped = pt }
         }
       }
+      for (const overlay of overlays) {
+        for (const pt of [overlay.startTime, overlay.endTime]) {
+          const d = Math.abs(pt - raw)
+          if (d < bestDist) { bestDist = d; snapped = pt }
+        }
+      }
     }
     setCurrentTime(snapToFrame(snapped, currentFps))
   }
 
+  function flushScheduledScrub() {
+    scrubRaf.current = null
+    const clientX = pendingScrubX.current
+    pendingScrubX.current = null
+    if (clientX == null || !scrubbing.current) return
+    seekToX(clientX)
+  }
+
+  function scheduleSeekToX(clientX: number) {
+    pendingScrubX.current = clientX
+    if (scrubRaf.current != null) return
+    scrubRaf.current = requestAnimationFrame(flushScheduledScrub)
+  }
+
   const onScrubMove = useCallback((e: MouseEvent) => {
     if (!scrubbing.current) return
-    // Auto-scroll when cursor is near/past the left or right edge.
     const container = containerRef.current
     if (container) {
-      const rect  = container.getBoundingClientRect()
-      const ZONE  = 80  // px from edge to begin scrolling
-      if (e.clientX < rect.left + ZONE) {
-        const speed = Math.ceil((ZONE - (e.clientX - rect.left)) / 2)
+      const rect = container.getBoundingClientRect()
+      const zone = 80
+      if (e.clientX < rect.left + zone) {
+        const speed = Math.ceil((zone - (e.clientX - rect.left)) / 2)
         container.scrollLeft = Math.max(0, container.scrollLeft - speed)
-      } else if (e.clientX > rect.right - ZONE) {
-        const speed = Math.ceil((e.clientX - (rect.right - ZONE)) / 2)
+      } else if (e.clientX > rect.right - zone) {
+        const speed = Math.ceil((e.clientX - (rect.right - zone)) / 2)
         container.scrollLeft += speed
       }
     }
-    seekToX(e.clientX)
+    scheduleSeekToX(e.clientX)
   }, [pxPerMs, snapEnabled])
 
-  const onScrubUp = useCallback(() => { scrubbing.current = false; document.body.style.cursor = '' }, [])
+  const onScrubUp = useCallback(() => {
+    const finalX = pendingScrubX.current
+    if (scrubRaf.current != null) {
+      cancelAnimationFrame(scrubRaf.current)
+      scrubRaf.current = null
+    }
+    pendingScrubX.current = null
+    if (scrubbing.current && finalX != null) seekToX(finalX)
+    scrubbing.current = false
+    document.body.style.cursor = ''
+  }, [pxPerMs, snapEnabled])
 
   useEffect(() => {
     window.addEventListener('mousemove', onScrubMove)
     window.addEventListener('mouseup', onScrubUp)
-    return () => { window.removeEventListener('mousemove', onScrubMove); window.removeEventListener('mouseup', onScrubUp) }
+    return () => {
+      window.removeEventListener('mousemove', onScrubMove)
+      window.removeEventListener('mouseup', onScrubUp)
+      if (scrubRaf.current != null) cancelAnimationFrame(scrubRaf.current)
+    }
   }, [onScrubMove, onScrubUp])
+
+  const keepPlayheadInView = useCallback(() => {
+    const tracks = containerRef.current
+    if (!tracks) return
+
+    const x = msToPx(useEditorStore.getState().currentTime)
+    const left = tracks.scrollLeft
+    const right = left + tracks.clientWidth
+    const margin = Math.min(PLAYHEAD_SCROLL_MARGIN_PX, Math.max(16, tracks.clientWidth / 4))
+
+    if (x < left + margin) {
+      tracks.scrollLeft = Math.max(0, x - margin)
+    } else if (x > right - margin) {
+      tracks.scrollLeft = Math.max(0, x - tracks.clientWidth + margin)
+    }
+  }, [pxPerMs])
+
+  useEffect(() => {
+    keepPlayheadInView()
+  }, [currentTime, zoom, keepPlayheadInView])
 
   // ── Scroll / zoom via wheel ────────────────────────────────────────────────
   useEffect(() => {
@@ -521,15 +668,16 @@ export default function Timeline() {
                   <span style={styles.tickLabel}>{formatRulerTime(t)}</span>
                 </div>
               ))}
-              <div style={{ position: 'absolute', top: 0, height: RULER_HEIGHT, left: playheadLeft - 1, width: 2, background: '#e63950', zIndex: 10, pointerEvents: 'none' }}>
-                <div style={{ position: 'absolute', bottom: 0, left: -5, width: 0, height: 0, borderLeft: '6px solid transparent', borderRight: '6px solid transparent', borderTop: '10px solid #e63950' }} />
+              <div style={{ ...styles.playheadRuler, left: playheadLeft - 1 }} onMouseDown={startScrub}>
+                <div style={styles.playheadRulerHit} />
+                <div style={styles.playheadRulerHandle} />
               </div>
             </div>
           </div>
 
           {/* Tracks — scrolls both axes */}
           <div style={styles.tracksScroll} ref={containerRef}>
-            <div style={{ position: 'relative', width: msToPx(duration), minWidth: '100%' }}>
+            <div style={{ position: 'relative', width: msToPx(duration), minWidth: '100%' }} onMouseDown={startScrub}>
 
               {/* Video tracks */}
               <div style={styles.sectionDivider}>
@@ -538,12 +686,13 @@ export default function Timeline() {
               {Array.from({ length: videoTrackCount }).map((_, i) => {
                 const trackIdx = videoTrackCount - 1 - i
                 return (
-                  <TrackRow key={trackIdx} trackIdx={trackIdx} trackHeight={getTrackH(trackIdx)} clips={clips} timelineItems={timelineItems} msToPx={msToPx}
+                  <TrackRow key={trackIdx} trackIdx={trackIdx} trackHeight={getTrackH(trackIdx)} clips={clips} timelineItems={timelineItems} textOverlays={textOverlays} msToPx={msToPx}
                     dragOverTrack={dragOverTrack} selectedId={selectedId} setSelectedId={setSelectedId} onClipMouseDown={onClipMouseDown}
                     onResizeMouseDown={onResizeMouseDown} removeTimelineItem={removeTimelineItem}
+                    onTextMouseDown={onTextMouseDown} onTextResizeMouseDown={onTextResizeMouseDown} removeTextOverlay={removeTextOverlay}
                     handleTrackDrop={handleTrackDrop} handleTrackDragOver={handleTrackDragOver}
                     handleTrackDragLeave={handleTrackDragLeave}
-                    updateTransition={updateTransition} onTransitionChipClick={openTransitionPopup} />
+                    updateTransition={updateTransition} onTransitionChipClick={openTransitionPopup} videoTrackCount={videoTrackCount} />
                 )
               })}
 
@@ -552,12 +701,13 @@ export default function Timeline() {
                 <span style={{ ...styles.sectionDividerLabel, color: '#2a8abf' }}>AUDIO</span>
               </div>
               {Array.from({ length: audioTrackCount }).map((_, i) => (
-                <TrackRow key={i} trackIdx={videoTrackCount + i} trackHeight={getTrackH(videoTrackCount + i)} clips={clips} timelineItems={timelineItems} msToPx={msToPx}
+                <TrackRow key={i} trackIdx={videoTrackCount + i} trackHeight={getTrackH(videoTrackCount + i)} clips={clips} timelineItems={timelineItems} textOverlays={textOverlays} msToPx={msToPx}
                   dragOverTrack={dragOverTrack} selectedId={selectedId} setSelectedId={setSelectedId} onClipMouseDown={onClipMouseDown}
                   onResizeMouseDown={onResizeMouseDown} removeTimelineItem={removeTimelineItem}
+                  onTextMouseDown={onTextMouseDown} onTextResizeMouseDown={onTextResizeMouseDown} removeTextOverlay={removeTextOverlay}
                   handleTrackDrop={handleTrackDrop} handleTrackDragOver={handleTrackDragOver}
                   handleTrackDragLeave={handleTrackDragLeave}
-                  updateTransition={updateTransition} onTransitionChipClick={openTransitionPopup} />
+                  updateTransition={updateTransition} onTransitionChipClick={openTransitionPopup} videoTrackCount={videoTrackCount} />
               ))}
 
               {/* Snap indicator */}
@@ -566,7 +716,8 @@ export default function Timeline() {
               )}
 
               {/* Playhead */}
-              <div style={{ position: 'absolute', top: 0, left: playheadLeft - 1, width: 2, height: totalHeight, background: '#e63950', zIndex: 10, pointerEvents: 'none' }} />
+              <div style={{ ...styles.playheadTrackHit, left: playheadLeft - 7, height: totalHeight }} onMouseDown={startScrub} />
+              <div style={{ ...styles.playheadTrackLine, left: playheadLeft - 1, height: totalHeight }} />
             </div>
           </div>
         </div>
@@ -634,21 +785,22 @@ function TransitionPopup({ itemId, rect, onClose }: { itemId: string; rect: DOMR
 }
 
 // ── WaveformBars ─────────────────────────────────────────────────────────────
-function WaveformBars({ path, trimStart, trimEnd, duration, volume }: {
-  path: string; trimStart: number; trimEnd: number; duration: number; volume: number
+function WaveformBars({ path, trimStart, trimEnd, volume, kind }: {
+  path: string; trimStart: number; trimEnd: number; volume: number; kind: 'audio' | 'video'
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const [waveform, setWaveform] = useState<import('../utils/waveform').WaveformData | null>(null)
+  const [waveform, setWaveform] = useState<WaveformData | null>(null)
 
   useEffect(() => {
     let active = true
+    setWaveform(null)
     getWaveform(path).then(w => { if (active) setWaveform(w) }).catch(() => {})
     return () => { active = false }
   }, [path])
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current
-    if (!canvas || !waveform) return
+    if (!canvas) return
     const rect = canvas.getBoundingClientRect()
     if (!rect.width || !rect.height) return
     const dpr = window.devicePixelRatio || 1
@@ -656,51 +808,68 @@ function WaveformBars({ path, trimStart, trimEnd, duration, volume }: {
     canvas.height = Math.round(rect.height * dpr)
     const ctx = canvas.getContext('2d')!
     const W = canvas.width, H = canvas.height
-    const mid = H / 2
-    const maxH = mid - 1
 
     ctx.clearRect(0, 0, W, H)
 
-    const totalSamples = waveform.length
-    const s0 = Math.floor((trimStart / duration) * totalSamples)
-    const s1 = Math.ceil( (trimEnd   / duration) * totalSamples)
-    const span = Math.max(1, s1 - s0)
-    const volScale = Math.min(2, volume / 100)
+    const colors = kind === 'audio'
+      ? {
+          peak: 'rgba(88, 184, 255, 0.30)',
+          rms: 'rgba(178, 225, 255, 0.86)',
+          center: 'rgba(142, 209, 255, 0.24)',
+        }
+      : {
+          peak: 'rgba(132, 226, 170, 0.20)',
+          rms: 'rgba(184, 245, 203, 0.62)',
+          center: 'rgba(162, 230, 185, 0.18)',
+        }
 
-    // ±50% amplitude reference lines (Audacity-style)
-    const y50 = Math.round(mid - maxH * 0.5)
-    ctx.fillStyle = 'rgba(52, 172, 196, 0.2)'
-    ctx.fillRect(0, y50,           W, 1)
-    ctx.fillRect(0, Math.round(mid + maxH * 0.5), W, 1)
-
-    // Per-pixel column: peak envelope + RMS body
-    for (let x = 0; x < W; x++) {
-      const lo = s0 + Math.floor( (x / W)       * span)
-      const hi = s0 + Math.floor(((x + 1) / W)  * span)
-
-      let peak = 0, sumSq = 0, count = 0
-      for (let i = lo; i < Math.min(hi + 1, totalSamples); i++) {
-        if (waveform.peaks[i] > peak) peak = waveform.peaks[i]
-        sumSq += waveform.rms[i] * waveform.rms[i]
-        count++
-      }
-      const rms = count > 0 ? Math.sqrt(sumSq / count) : 0
-
-      // Peak envelope — outer, translucent teal (Audacity outer fill)
-      const pH = Math.max(1, Math.min(maxH, peak * maxH * volScale))
-      ctx.fillStyle = 'rgba(46, 154, 180, 0.52)'
-      ctx.fillRect(x, mid - pH, 1, pH * 2)
-
-      // RMS body — inner, bright mint (Audacity inner fill)
-      const rH = Math.max(1, Math.min(maxH, rms * maxH * volScale))
-      ctx.fillStyle = 'rgba(78, 210, 228, 0.94)'
-      ctx.fillRect(x, mid - rH, 1, rH * 2)
+    if (!waveform) {
+      drawWaveformCenterLines(ctx, H, W, 1, colors.center)
+      return
     }
 
-    // Zero-crossing line
-    ctx.fillStyle = 'rgba(52, 172, 196, 0.5)'
-    ctx.fillRect(0, mid, W, 1)
-  }, [waveform, trimStart, trimEnd, duration, volume])
+    const visibleDurationMs = Math.max(1, trimEnd - trimStart)
+    const level = selectWaveformLevel(waveform, visibleDurationMs, W)
+    if (!level || level.length === 0 || level.channels.length === 0) {
+      drawWaveformCenterLines(ctx, H, W, 1, colors.center)
+      return
+    }
+
+    const laneCount = level.channels.length > 1 && H >= 28 * dpr ? 2 : 1
+    const laneGap = laneCount > 1 ? Math.max(1, Math.round(2 * dpr)) : 0
+    const laneHeight = (H - laneGap * (laneCount - 1)) / laneCount
+    const startIndex = Math.max(0, Math.floor((trimStart / 1000) * level.pointsPerSecond))
+    const endIndex = Math.max(startIndex + 1, Math.ceil((trimEnd / 1000) * level.pointsPerSecond))
+    const span = Math.max(1, endIndex - startIndex)
+    const volScale = volume <= 0 ? 0.18 : Math.max(0.28, Math.min(2, volume / 100))
+
+    drawWaveformCenterLines(ctx, H, W, laneCount, colors.center)
+
+    for (let x = 0; x < W; x++) {
+      const lo = startIndex + Math.floor((x / W) * span)
+      const hi = startIndex + Math.ceil(((x + 1) / W) * span)
+
+      for (let lane = 0; lane < laneCount; lane++) {
+        const laneTop = lane * (laneHeight + laneGap)
+        const mid = laneTop + laneHeight / 2
+        const half = Math.max(1, laneHeight / 2 - 1)
+        const sourceChannels = laneCount === 1 ? level.channels : [level.channels[lane]]
+        const sample = readWaveformRange(sourceChannels, lo, hi, level)
+
+        const topPeak = Math.min(half, sample.positive * half * 0.96 * volScale)
+        const bottomPeak = Math.min(half, Math.abs(sample.negative) * half * 0.96 * volScale)
+        ctx.fillStyle = colors.peak
+        if (topPeak > 0) ctx.fillRect(x, mid - topPeak, 1, topPeak)
+        if (bottomPeak > 0) ctx.fillRect(x, mid, 1, bottomPeak)
+
+        const rmsHeight = Math.min(half, sample.rms * half * 0.96 * volScale)
+        if (rmsHeight > 0) {
+          ctx.fillStyle = colors.rms
+          ctx.fillRect(x, mid - Math.max(0.5, rmsHeight), 1, Math.max(1, rmsHeight * 2))
+        }
+      }
+    }
+  }, [waveform, trimStart, trimEnd, volume, kind])
 
   useEffect(() => { draw() }, [draw])
 
@@ -715,17 +884,65 @@ function WaveformBars({ path, trimStart, trimEnd, duration, volume }: {
   return (
     <canvas
       ref={canvasRef}
-      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block', pointerEvents: 'none' }}
+      style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block', pointerEvents: 'none', zIndex: 1 }}
     />
   )
 }
 
+function drawWaveformCenterLines(
+  ctx: CanvasRenderingContext2D,
+  height: number,
+  width: number,
+  laneCount: number,
+  color: string,
+) {
+  const laneGap = laneCount > 1 ? Math.max(1, Math.round(2 * (window.devicePixelRatio || 1))) : 0
+  const laneHeight = (height - laneGap * (laneCount - 1)) / laneCount
+  ctx.fillStyle = color
+  for (let lane = 0; lane < laneCount; lane++) {
+    const mid = lane * (laneHeight + laneGap) + laneHeight / 2
+    ctx.fillRect(0, Math.round(mid), width, 1)
+  }
+}
+
+function readWaveformRange(channels: WaveformLevel['channels'], lo: number, hi: number, level: WaveformLevel) {
+  const end = Math.min(Math.max(hi, lo + 1), level.length)
+  const start = Math.max(0, Math.min(lo, end - 1))
+  let positive = 0
+  let negative = 0
+  let rmsSq = 0
+  let count = 0
+
+  for (const channel of channels) {
+    if (!channel) continue
+    for (let i = start; i < end; i++) {
+      positive = Math.max(positive, channel.positive[i] ?? 0)
+      negative = Math.min(negative, channel.negative[i] ?? 0)
+      const rms = channel.rms[i] ?? 0
+      rmsSq += rms * rms
+      count++
+    }
+  }
+
+  return {
+    positive,
+    negative,
+    rms: count > 0 ? Math.sqrt(rmsSq / count) : 0,
+  }
+}
+
 // ── TrackRow ────────────────────────────────────────────────────────────────
+function textOverlayTrackIndex(overlay: TextOverlay, videoTrackCount: number): number {
+  if (!Number.isFinite(overlay.trackIndex)) return Math.max(0, videoTrackCount - 1)
+  return Math.max(0, Math.min(videoTrackCount - 1, overlay.trackIndex))
+}
+
 interface TrackRowProps {
   trackIdx: number
   trackHeight: number
   clips: any[]
   timelineItems: any[]
+  textOverlays: TextOverlay[]
   msToPx: (ms: number) => number
   dragOverTrack: number | null
   selectedId: string | null
@@ -733,14 +950,18 @@ interface TrackRowProps {
   onClipMouseDown: (e: React.MouseEvent, id: string) => void
   onResizeMouseDown: (e: React.MouseEvent, id: string, edge: 'left' | 'right') => void
   removeTimelineItem: (id: string) => void
+  onTextMouseDown: (e: React.MouseEvent, id: string) => void
+  onTextResizeMouseDown: (e: React.MouseEvent, id: string, edge: 'left' | 'right') => void
+  removeTextOverlay: (id: string) => void
   handleTrackDrop: (e: React.DragEvent, idx: number) => void
   handleTrackDragOver: (e: React.DragEvent, idx: number) => void
   handleTrackDragLeave: (e: React.DragEvent) => void
   updateTransition: (id: string, changes: any) => void
   onTransitionChipClick: (itemId: string, rect: DOMRect) => void
+  videoTrackCount: number
 }
 
-function TrackRow({ trackIdx, trackHeight, clips, timelineItems, msToPx, dragOverTrack, selectedId, setSelectedId, onClipMouseDown, onResizeMouseDown, removeTimelineItem, handleTrackDrop, handleTrackDragOver, handleTrackDragLeave, updateTransition, onTransitionChipClick }: TrackRowProps) {
+function TrackRow({ trackIdx, trackHeight, clips, timelineItems, textOverlays, msToPx, dragOverTrack, selectedId, setSelectedId, onClipMouseDown, onResizeMouseDown, removeTimelineItem, onTextMouseDown, onTextResizeMouseDown, removeTextOverlay, handleTrackDrop, handleTrackDragOver, handleTrackDragLeave, updateTransition, onTransitionChipClick, videoTrackCount }: TrackRowProps) {
   return (
     <div
       data-track={trackIdx}
@@ -803,8 +1024,8 @@ function TrackRow({ trackIdx, trackHeight, clips, timelineItems, msToPx, dragOve
               style={{ ...styles.clip, left: msToPx(item.startTime), width: Math.max(msToPx(item.trimEnd - item.trimStart), 4), height: trackHeight - 6, background: bg, borderColor: border, outline: isSelected ? '2px solid #fff' : 'none', outlineOffset: -1 }}
               onMouseDown={e => onClipMouseDown(e, item.id)}
             >
-              {clip.type === 'audio' && (
-                <WaveformBars path={clip.path} trimStart={item.trimStart} trimEnd={item.trimEnd} duration={clip.duration} volume={item.volume ?? 100} />
+              {(clip.type === 'audio' || clip.type === 'video') && (
+                <WaveformBars path={clip.path} trimStart={item.trimStart} trimEnd={item.trimEnd} volume={item.volume ?? 100} kind={clip.type} />
               )}
               <div style={styles.resizeL} onMouseDown={e => onResizeMouseDown(e, item.id, 'left')} />
               <span style={styles.clipLabel} title={clip.name}>{clip.name}</span>
@@ -845,6 +1066,63 @@ function TrackRow({ trackIdx, trackHeight, clips, timelineItems, msToPx, dragOve
           </Fragment>
         )
       })}
+      {trackIdx < videoTrackCount && textOverlays
+        .filter(overlay => textOverlayTrackIndex(overlay, videoTrackCount) === trackIdx)
+        .map(overlay => {
+          const width = Math.max(msToPx(overlay.endTime - overlay.startTime), 18)
+          const isSelected = selectedId === overlay.id
+          return (
+            <div
+              key={overlay.id}
+              style={{
+                ...styles.clip,
+                ...styles.textClip,
+                left: msToPx(overlay.startTime),
+                width,
+                height: trackHeight - 6,
+                outline: isSelected ? '2px solid #fff' : 'none',
+                outlineOffset: -1,
+              }}
+              onMouseDown={e => onTextMouseDown(e, overlay.id)}
+              title={overlay.text}
+            >
+              <div style={styles.resizeL} onMouseDown={e => onTextResizeMouseDown(e, overlay.id, 'left')} />
+              <span style={styles.textClipIcon}>T</span>
+              <span style={styles.clipLabel}>{overlay.text || 'Text'}</span>
+              <div style={styles.resizeR} onMouseDown={e => onTextResizeMouseDown(e, overlay.id, 'right')} />
+              <button style={styles.clipDel} onMouseDown={e => e.stopPropagation()} onClick={() => removeTextOverlay(overlay.id)}>×</button>
+              {overlay.keyframeTracks && overlay.keyframeTracks.length > 0 && (() => {
+                const clipDur = Math.max(1, overlay.endTime - overlay.startTime)
+                const times = allKeyframeTimes(overlay.keyframeTracks)
+                return (
+                  <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 10, pointerEvents: 'none' }}>
+                    <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 2, background: 'rgba(255,204,0,0.35)' }} />
+                    {isSelected && times.map(t => (
+                      <div
+                        key={t}
+                        style={{
+                          position: 'absolute',
+                          left: `${Math.min(100, (t / clipDur) * 100)}%`,
+                          top: '50%',
+                          transform: 'translate(-50%, -50%) rotate(45deg)',
+                          width: 7, height: 7,
+                          background: '#ffcc00',
+                          boxShadow: '0 0 3px rgba(0,0,0,0.6)',
+                          cursor: 'pointer',
+                          pointerEvents: 'all',
+                        }}
+                        onMouseDown={ev => {
+                          ev.stopPropagation()
+                          useEditorStore.getState().setCurrentTime(overlay.startTime + t)
+                        }}
+                      />
+                    ))}
+                  </div>
+                )
+              })()}
+            </div>
+          )
+        })}
     </div>
   )
 }
@@ -885,12 +1163,19 @@ const styles: Record<string, React.CSSProperties> = {
   tick:         { position: 'absolute', top: 0, display: 'flex', flexDirection: 'column', alignItems: 'center' },
   tickLine:     { width: 1, height: 8, background: '#3a3a3a' },
   tickLabel:    { fontSize: 11, color: '#555', marginTop: 1, whiteSpace: 'nowrap', userSelect: 'none' },
+  playheadRuler: { position: 'absolute', top: 0, height: RULER_HEIGHT, width: 2, background: '#e63950', zIndex: 12, cursor: 'ew-resize' },
+  playheadRulerHit: { position: 'absolute', top: 0, bottom: 0, left: -7, width: 16 },
+  playheadRulerHandle: { position: 'absolute', bottom: 0, left: -5, width: 0, height: 0, borderLeft: '6px solid transparent', borderRight: '6px solid transparent', borderTop: '10px solid #e63950', filter: 'drop-shadow(0 1px 2px rgba(0,0,0,0.7))' },
+  playheadTrackHit: { position: 'absolute', top: 0, width: 14, zIndex: 13, cursor: 'ew-resize', background: 'transparent' },
+  playheadTrackLine: { position: 'absolute', top: 0, width: 2, background: '#e63950', zIndex: 12, pointerEvents: 'none', boxShadow: '0 0 0 1px rgba(0,0,0,0.35)' },
   sectionDivider:      { height: SECTION_H, background: '#0e0e0e', borderBottom: '1px solid #222', display: 'flex', alignItems: 'center', paddingLeft: 10 },
   sectionDividerAudio: { borderTop: '2px solid #252525' },
   sectionDividerLabel: { fontSize: 11, fontWeight: 700, letterSpacing: 1, color: '#2abf5a', opacity: 0.4 },
   track:        { height: TRACK_HEIGHT, borderBottom: '1px solid #1e1e1e', position: 'relative', background: '#181818', transition: 'background 0.1s' },
   trackDragging:{ background: 'rgba(42,191,90,0.07)', outline: '2px dashed #2abf5a', outlineOffset: -2 },
   clip:         { position: 'absolute', top: 3, height: TRACK_HEIGHT - 6, borderRadius: 4, border: '1px solid', overflow: 'hidden', display: 'flex', alignItems: 'center', userSelect: 'none', cursor: 'grab', minWidth: 4 },
+  textClip:     { background: '#26143c', borderColor: '#8b5cf6', boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.05)' },
+  textClipIcon: { position: 'relative', zIndex: 2, width: 22, color: '#d7c4ff', fontSize: 13, fontWeight: 800, textAlign: 'center', textShadow: '0 1px 3px rgba(0,0,0,0.8)', flexShrink: 0 },
   clipLabel:    { fontSize: 12, color: '#fff', paddingLeft: 9, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, pointerEvents: 'none', position: 'relative', zIndex: 2, textShadow: '0 1px 3px rgba(0,0,0,0.9), 0 0 8px rgba(0,0,0,0.8)' },
   clipDel:      { position: 'absolute', top: 1, right: 1, background: 'transparent', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: 14, lineHeight: 1, padding: '0 2px', zIndex: 4 },
   resizeL:      { position: 'absolute', left: 0, top: 0, width: 5, height: '100%', cursor: 'ew-resize', background: 'rgba(255,255,255,0.1)', zIndex: 3 },

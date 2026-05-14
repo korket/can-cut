@@ -10,12 +10,32 @@ export interface MediaClip {
   thumbnail?: string
   folderId?: string | null
   color?: string   // solid color clips only
+  importedAt?: string
 }
 
 export interface MediaFolder {
   id: string
   name: string
 }
+
+export type CompositeMode =
+  | 'normal'
+  | 'multiply'
+  | 'screen'
+  | 'overlay'
+  | 'darken'
+  | 'lighten'
+  | 'color-dodge'
+  | 'color-burn'
+  | 'hard-light'
+  | 'soft-light'
+  | 'difference'
+  | 'exclusion'
+  | 'hue'
+  | 'saturation'
+  | 'color'
+  | 'luminosity'
+  | 'add'
 
 export interface Transform {
   scaleX: number     // 1 = 100 %
@@ -61,13 +81,16 @@ export interface Effects {
   shadowColor:   string  // hex
   backdropBlur:     number  // 0 = off, 1–30 px — blurs all layers rendered below this one
   backdropBlurFade: number  // fade-in/out duration in ms (0 = instant)
+  backdropOpacity:  number  // 0–100, 100 = background unchanged
+  compositeMode: CompositeMode
 }
 
 export const DEFAULT_EFFECTS: Effects = {
   brightness: 100, contrast: 100, saturate: 100,
   hue: 0, blur: 0, opacity: 100, grayscale: 0, sepia: 0,
   shadowOpacity: 0, shadowX: 4, shadowY: 4, shadowBlur: 8, shadowColor: '#000000',
-  backdropBlur: 0, backdropBlurFade: 600,
+  backdropBlur: 0, backdropBlurFade: 600, backdropOpacity: 100,
+  compositeMode: 'normal',
 }
 
 export type AnimEffect =
@@ -159,10 +182,15 @@ export interface TextOverlay {
   color: string
   x: number          // px
   y: number          // px
+  trackIndex: number // video track used for timeline/layer ordering
   startTime: number  // ms on timeline
   endTime: number    // ms on timeline
   bold: boolean
   italic: boolean
+  transform?: Transform
+  effects?: Effects
+  animation?: Animation
+  keyframeTracks?: KeyframeTrack[]
 }
 
 export type Tool = 'select' | 'text'

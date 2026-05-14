@@ -7,9 +7,40 @@ import Timeline from './components/Timeline'
 import ExportModal from './components/ExportModal'
 import ShortcutsModal from './components/ShortcutsModal'
 import ProjectsScreen from './components/ProjectsScreen'
+import VersionHistoryModal from './components/VersionHistoryModal'
+import { createProjectDocument, readEditorStateFromProjectData } from './editor-core/document'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import { useEditorStore } from './store/useEditorStore'
-import { useHistoryStore, captureSnapshot, snapshotChanged, type HistorySnapshot } from './store/useHistoryStore'
+import { useHistoryStore } from './store/useHistoryStore'
+
+const AUTOSAVE_DELAY_MS = 1500
+const AUTO_VERSION_INTERVAL_MS = 60_000
+
+type EditorStateSnapshot = ReturnType<typeof useEditorStore.getState>
+
+function createProjectContentKey(state: EditorStateSnapshot) {
+  return JSON.stringify({
+    clips: state.clips,
+    folders: state.folders,
+    timelineItems: state.timelineItems,
+    textOverlays: state.textOverlays,
+    zoom: state.zoom,
+    fps: state.fps,
+    videoTrackCount: state.videoTrackCount,
+    audioTrackCount: state.audioTrackCount,
+  })
+}
+
+function getProjectDocumentTime(json: string | null | undefined) {
+  if (!json) return 0
+  try {
+    const data = JSON.parse(json)
+    const value = typeof data?.updatedAt === 'string' ? data.updatedAt : data?.createdAt
+    return value ? new Date(value).getTime() : 0
+  } catch {
+    return 0
+  }
+}
 
 // ── Resizer handle ─────────────────────────────────────────────────────────
 function Resizer({ direction, onMouseDown }: { direction: 'h' | 'v'; onMouseDown: (e: React.MouseEvent) => void }) {
@@ -29,9 +60,16 @@ const EMPTY_STATE = {
 }
 
 // ── Editor view ───────────────────────────────────────────────────────────
-function Editor({ projectId, projectName, onBack }: { projectId: string; projectName: string; onBack: () => void }) {
+function Editor({ projectId, projectName, projectCreatedAt, onBack, onOpenProject }: {
+  projectId: string
+  projectName: string
+  projectCreatedAt?: string
+  onBack: () => void
+  onOpenProject: (id: string) => Promise<void>
+}) {
   const [showExport,    setShowExport]    = useState(false)
   const [showShortcuts, setShowShortcuts] = useState(false)
+  const [showVersions,  setShowVersions]  = useState(false)
 
   const [sidebarWidth,    setSidebarWidth]    = useState(() => Number(localStorage.getItem('layout:sidebarWidth'))    || 240)
   const [propertiesWidth, setPropertiesWidth] = useState(() => Number(localStorage.getItem('layout:propertiesWidth')) || 220)
@@ -67,63 +105,82 @@ function Editor({ projectId, projectName, onBack }: { projectId: string; project
     return () => { window.removeEventListener('mousemove', onMouseMove); window.removeEventListener('mouseup', onMouseUp) }
   }, [onMouseMove, onMouseUp])
 
-  // History recording: push snapshot BEFORE the first change of each action, debounce 300 ms
-  const stableSnap  = useRef<HistorySnapshot>(captureSnapshot())
-  const histTimer   = useRef<ReturnType<typeof setTimeout> | null>(null)
-  useEffect(() => {
-    const unsub = useEditorStore.subscribe((state) => {
-      if (useHistoryStore.getState().isApplying) return
+  const getCurrentProjectData = useCallback((updatedAt = new Date().toISOString()) => {
+    const state = useEditorStore.getState()
+    return JSON.stringify(createProjectDocument({
+      id: projectId, name: projectName,
+      createdAt: projectCreatedAt,
+      updatedAt,
+      clips:           state.clips,
+      folders:         state.folders,
+      timelineItems:   state.timelineItems,
+      textOverlays:    state.textOverlays,
+      zoom:            state.zoom,
+      fps:             state.fps,
+      videoTrackCount: state.videoTrackCount,
+      audioTrackCount: state.audioTrackCount,
+    }))
+  }, [projectId, projectName, projectCreatedAt])
 
-      const snap: HistorySnapshot = {
-        clips: state.clips, folders: state.folders,
-        timelineItems: state.timelineItems, textOverlays: state.textOverlays,
-        videoTrackCount: state.videoTrackCount, audioTrackCount: state.audioTrackCount,
-      }
-      if (!snapshotChanged(snap, stableSnap.current)) return
+  const suppressAutosave = useRef(false)
+  const lastContentKey = useRef('')
+  const lastAutoVersionAt = useRef(0)
 
-      // First change of this action: push state BEFORE the action
-      if (!histTimer.current) useHistoryStore.getState().push({ ...stableSnap.current })
-      else clearTimeout(histTimer.current)
-
-      // After settling, advance the stable baseline
-      histTimer.current = setTimeout(() => {
-        stableSnap.current = captureSnapshot()
-        histTimer.current = null
-      }, 300)
-    })
-    return () => { unsub(); if (histTimer.current) clearTimeout(histTimer.current) }
-  }, [])
-
-  // Auto-save on store changes (debounced 1.5 s)
+  // Auto-save meaningful document changes, with recovery and periodic history snapshots.
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
+    lastContentKey.current = createProjectContentKey(useEditorStore.getState())
+
     const unsub = useEditorStore.subscribe((state) => {
+      const contentKey = createProjectContentKey(state)
+      const suppressing = suppressAutosave.current
+      if (suppressing) suppressAutosave.current = false
+
+      if (contentKey === lastContentKey.current) return
+      lastContentKey.current = contentKey
+
+      if (suppressing) return
+
       if (saveTimer.current) clearTimeout(saveTimer.current)
-      saveTimer.current = setTimeout(() => {
-        const thumbnail = (() => {
-          const first = state.timelineItems[0]
-          if (!first) return null
-          const clip = state.clips.find(c => c.id === first.clipId)
-          return clip?.thumbnail ?? null
-        })()
-        const payload = JSON.stringify({
-          id: projectId, name: projectName,
-          updatedAt: new Date().toISOString(),
-          thumbnail,
-          clips:           state.clips,
-          folders:         state.folders,
-          timelineItems:   state.timelineItems,
-          textOverlays:    state.textOverlays,
-          zoom:            state.zoom,
-          fps:             state.fps,
-          videoTrackCount: state.videoTrackCount,
-          audioTrackCount: state.audioTrackCount,
-        })
-        window.api.saveProject(projectId, payload)
-      }, 1500)
+      saveTimer.current = setTimeout(async () => {
+        const payload = getCurrentProjectData()
+        try {
+          await window.api.saveProjectRecovery(projectId, payload)
+          await window.api.saveProject(projectId, payload)
+
+          const now = Date.now()
+          if (now - lastAutoVersionAt.current >= AUTO_VERSION_INTERVAL_MS) {
+            lastAutoVersionAt.current = now
+            await window.api.createProjectVersion(projectId, payload, { label: 'Autosave', kind: 'auto' })
+          }
+        } catch (error) {
+          console.error('Autosave failed', error)
+        }
+      }, AUTOSAVE_DELAY_MS)
     })
     return () => { unsub(); if (saveTimer.current) clearTimeout(saveTimer.current) }
-  }, [projectId, projectName])
+  }, [projectId, getCurrentProjectData])
+
+  const restoreProjectData = useCallback(async (json: string) => {
+    const data = readEditorStateFromProjectData(JSON.parse(json))
+    suppressAutosave.current = true
+    useEditorStore.setState({
+      clips:           data.clips           ?? [],
+      folders:         data.folders         ?? [],
+      timelineItems:   data.timelineItems   ?? [],
+      textOverlays:    data.textOverlays    ?? [],
+      zoom:            data.zoom            ?? 100,
+      fps:             data.fps             ?? 30,
+      videoTrackCount: data.videoTrackCount ?? 2,
+      audioTrackCount: data.audioTrackCount ?? 2,
+      currentTime: 0, isPlaying: false, selectedId: null,
+    })
+    useHistoryStore.getState().clear()
+    const payload = getCurrentProjectData()
+    lastContentKey.current = createProjectContentKey(useEditorStore.getState())
+    await window.api.saveProjectRecovery(projectId, payload)
+    await window.api.saveProject(projectId, payload)
+  }, [getCurrentProjectData, projectId])
 
   useKeyboardShortcuts(() => setShowExport(true))
 
@@ -132,6 +189,7 @@ function Editor({ projectId, projectName, onBack }: { projectId: string; project
       <TopBar
         onExport={() => setShowExport(true)}
         onShortcuts={() => setShowShortcuts(true)}
+        onVersions={() => setShowVersions(true)}
         onBack={onBack}
         projectName={projectName}
       />
@@ -147,22 +205,42 @@ function Editor({ projectId, projectName, onBack }: { projectId: string; project
 
       {showExport    && <ExportModal    onClose={() => setShowExport(false)} />}
       {showShortcuts && <ShortcutsModal onClose={() => setShowShortcuts(false)} />}
+      {showVersions  && (
+        <VersionHistoryModal
+          projectId={projectId}
+          projectName={projectName}
+          onClose={() => setShowVersions(false)}
+          getCurrentProjectData={getCurrentProjectData}
+          onRestoreProjectData={restoreProjectData}
+          onOpenProject={onOpenProject}
+        />
+      )}
     </div>
   )
 }
 
 // ── Root App ──────────────────────────────────────────────────────────────
 export default function App() {
-  const [projectId,   setProjectId]   = useState<string | null>(null)
-  const [projectName, setProjectName] = useState('')
-  const [loading,     setLoading]     = useState(false)
+  const [projectId,        setProjectId]        = useState<string | null>(null)
+  const [projectName,      setProjectName]      = useState('')
+  const [projectCreatedAt, setProjectCreatedAt] = useState<string | undefined>()
+  const [loading,          setLoading]          = useState(false)
 
   async function openProject(id: string) {
     setLoading(true)
     try {
-      const json = await window.api.loadProject(id)
+      let json = await window.api.loadProject(id)
       if (!json) { setLoading(false); return }
-      const data = JSON.parse(json)
+      const recovery = await window.api.loadProjectRecovery(id)
+      if (recovery?.data && getProjectDocumentTime(recovery.data) > getProjectDocumentTime(json) + 1000) {
+        const restoreRecovery = window.confirm('A newer autosave recovery exists for this project. Restore it?')
+        if (restoreRecovery) {
+          json = recovery.data
+          await window.api.saveProject(id, json)
+        }
+      }
+
+      const data = readEditorStateFromProjectData(JSON.parse(json))
       useEditorStore.setState({
         clips:           data.clips           ?? [],
         folders:         data.folders         ?? [],
@@ -175,6 +253,7 @@ export default function App() {
         currentTime: 0, isPlaying: false, selectedId: null,
       })
       setProjectName(data.name ?? 'Untitled')
+      setProjectCreatedAt(data.createdAt)
       setProjectId(id)
       useHistoryStore.getState().clear()
     } catch {
@@ -188,6 +267,7 @@ export default function App() {
     useHistoryStore.getState().clear()
     setProjectId(null)
     setProjectName('')
+    setProjectCreatedAt(undefined)
   }
 
   if (loading) {
@@ -198,7 +278,7 @@ export default function App() {
     return <ProjectsScreen onOpen={openProject} />
   }
 
-  return <Editor projectId={projectId} projectName={projectName} onBack={goHome} />
+  return <Editor projectId={projectId} projectName={projectName} projectCreatedAt={projectCreatedAt} onBack={goHome} onOpenProject={openProject} />
 }
 
 const styles: Record<string, React.CSSProperties> = {
