@@ -13,6 +13,7 @@ function formatDuration(ms: number) {
 type ViewMode   = 'grid' | 'list'
 type TypeFilter = 'all' | 'video' | 'audio' | 'image' | 'solid'
 type SortMode = 'recent' | 'name-asc' | 'name-desc' | 'type' | 'duration-desc' | 'duration-asc'
+const SORT_ORDER: SortMode[] = ['name-asc', 'name-desc', 'recent', 'type', 'duration-desc', 'duration-asc']
 
 const TYPE_BADGE: Record<string, string> = {
   video: 'VIDEO', audio: 'AUDIO', image: 'IMG', solid: 'SOLID',
@@ -231,7 +232,7 @@ export default function MediaBin() {
   const [folderDragOver, setFolderDragOver]     = useState<string | 'root' | null>(null)
   const [search, setSearch]                     = useState('')
   const [typeFilter, setTypeFilter]             = useState<TypeFilter>('all')
-  const [sortMode, setSortMode]                 = useState<SortMode>('recent')
+  const [sortMode, setSortMode]                 = useState<SortMode>('name-asc')
   const [viewMode, setViewMode]                 = useState<ViewMode>('grid')
   const [contextMenu, setContextMenu]           = useState<{ clipId: string; x: number; y: number } | null>(null)
 
@@ -252,7 +253,7 @@ export default function MediaBin() {
 
   function sortClips(list: MediaClip[]) {
     const importedMs = (clip: MediaClip) => clip.importedAt ? new Date(clip.importedAt).getTime() : 0
-    const byName = (a: MediaClip, b: MediaClip) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+    const byName = (a: MediaClip, b: MediaClip) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true })
     const byType = (a: MediaClip, b: MediaClip) => a.type.localeCompare(b.type) || byName(a, b)
 
     return list
@@ -271,7 +272,7 @@ export default function MediaBin() {
   }
 
   function sortFolders(list: MediaFolder[]) {
-    return [...list].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+    return [...list].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }))
   }
 
   // Clips shown in main pane
@@ -417,7 +418,7 @@ export default function MediaBin() {
             onChange={e => setSortMode(e.target.value as SortMode)}
             title="Sort media"
           >
-            {(Object.keys(SORT_LABELS) as SortMode[]).map(mode => (
+            {SORT_ORDER.map(mode => (
               <option key={mode} value={mode}>{SORT_LABELS[mode]}</option>
             ))}
           </select>
