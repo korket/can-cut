@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { useEditorStore } from '../store/useEditorStore'
-import type { TextOverlay, Transform, Effects, Animation, AnimEffect, Transition, TransitionType, KeyframeTrack, KenBurns } from '../types'
+import type { TextOverlay, Transform, Effects, Animation, AnimEffect, Transition, TransitionType, KeyframeTrack, KenBurns, CompositeMode } from '../types'
 import { DEFAULT_TRANSFORM, DEFAULT_EFFECTS, DEFAULT_ANIMATION, DEFAULT_TRANSITION, DEFAULT_KEN_BURNS } from '../types'
 import { nanoid } from '../utils/nanoid'
 import { hasKeyframeAt, applyKeyframesToTransform, applyKeyframesToEffects } from '../utils/keyframes'
@@ -575,6 +575,26 @@ const SHADOW_PRESETS: Array<{ label: string; values?: { shadowOpacity: number; s
   { label: 'Deep',  values: { shadowOpacity: 75, shadowBlur: 18, shadowX: 8,  shadowY: 14 } },
 ]
 
+const COMPOSITE_MODES: Array<{ value: CompositeMode; label: string }> = [
+  { value: 'normal',      label: 'Normal'       },
+  { value: 'multiply',    label: 'Multiply'     },
+  { value: 'screen',      label: 'Screen'       },
+  { value: 'overlay',     label: 'Overlay'      },
+  { value: 'darken',      label: 'Darken'       },
+  { value: 'lighten',     label: 'Lighten'      },
+  { value: 'color-dodge', label: 'Color Dodge'  },
+  { value: 'color-burn',  label: 'Color Burn'   },
+  { value: 'hard-light',  label: 'Hard Light'   },
+  { value: 'soft-light',  label: 'Soft Light'   },
+  { value: 'difference',  label: 'Difference'   },
+  { value: 'exclusion',   label: 'Exclusion'    },
+  { value: 'hue',         label: 'Hue'          },
+  { value: 'saturation',  label: 'Saturation'   },
+  { value: 'color',       label: 'Color'        },
+  { value: 'luminosity',  label: 'Luminosity'   },
+  { value: 'add',         label: 'Add'          },
+]
+
 // ── Effects Section ───────────────────────────────────────────────────────────
 interface EffectsSectionProps {
   effects: Effects; effective: Effects
@@ -588,6 +608,7 @@ function EffectsSection({ effects: base, effective: e, update, clipTime, kfTrack
   const hasEffect = base.brightness !== 100 || base.contrast !== 100 || base.saturate !== 100 ||
                     base.hue !== 0 || base.blur !== 0 || base.opacity !== 100 ||
                     base.grayscale !== 0 || base.sepia !== 0 || base.shadowOpacity > 0 || base.backdropBlur > 0 ||
+                    base.compositeMode !== 'normal' ||
                     kfTracks.some(t =>
                       ['brightness','contrast','saturate','hue','blur','opacity','grayscale','sepia'].includes(t.property))
 
@@ -610,6 +631,18 @@ function EffectsSection({ effects: base, effective: e, update, clipTime, kfTrack
       <TRow label="Opacity"    min={0}    max={100} step={1}   value={e.opacity}    unit="%"  onChange={v => ch('opacity',    v)} onReset={() => update({ opacity: 100 })}    kf={kf('opacity',    e.opacity)}    />
       <TRow label="Grayscale"  min={0}    max={100} step={1}   value={e.grayscale}  unit="%"  onChange={v => ch('grayscale',  v)} onReset={() => update({ grayscale: 0 })}    kf={kf('grayscale',  e.grayscale)}  />
       <TRow label="Sepia"      min={0}    max={100} step={1}   value={e.sepia}      unit="%"  onChange={v => ch('sepia',      v)} onReset={() => update({ sepia: 0 })}        kf={kf('sepia',      e.sepia)}      />
+
+      <div style={{ ...styles.animSelectRow, gridColumn: 'span 2', borderTop: '1px solid #242424', marginTop: 4, paddingTop: 10 }}>
+        <span style={{ ...styles.tLabel, color: base.compositeMode !== 'normal' ? '#e6a030' : '#aaa' }}>Composite</span>
+        <select
+          value={base.compositeMode}
+          onChange={ev => update({ compositeMode: ev.target.value as CompositeMode })}
+          style={styles.animSelect}
+          title="Layer composite mode"
+        >
+          {COMPOSITE_MODES.map(mode => <option key={mode.value} value={mode.value}>{mode.label}</option>)}
+        </select>
+      </div>
 
       {/* Backdrop Blur */}
       <div style={{ gridColumn: 'span 2', borderTop: '1px solid #242424', marginTop: 4, paddingTop: 10 }}>

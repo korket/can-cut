@@ -1,6 +1,6 @@
 import { evaluateClipAtTime, evaluateTextOverlayAtTime, evaluateTransition } from '../editor-core/evaluation'
 import { getClipSourceTimeMs, getItemDuration, getItemEnd, isItemActiveAt } from '../editor-core/timeline'
-import type { TimelineItem, MediaClip, TextOverlay, Transform, Effects } from '../types'
+import type { TimelineItem, MediaClip, TextOverlay, Transform, Effects, CompositeMode } from '../types'
 import type { LoadedCanvasMedia } from './mediaElementLoader'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -28,6 +28,16 @@ function effectsFilter(ef: Effects): string {
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value))
+}
+
+function compositeOperation(mode: CompositeMode | undefined): CanvasRenderingContext2D['globalCompositeOperation'] {
+  if (!mode || mode === 'normal') return 'source-over'
+  if (mode === 'add') return 'lighter'
+  return mode
+}
+
+function applyCompositeMode(ctx: CanvasRenderingContext2D, ef: Effects): void {
+  ctx.globalCompositeOperation = compositeOperation(ef.compositeMode)
 }
 
 function applyBackdropEffect(
@@ -371,6 +381,7 @@ async function drawLayer(
     ctx.scale(animation.scale, animation.scale)
     ctx.translate(-W / 2, -H / 2)
     ctx.globalAlpha = totalOpacity
+    applyCompositeMode(ctx, ef)
     if (wipeClipPath) applyWipeClip(ctx, W, H, wipeClipPath)
     ctx.shadowColor    = hexToRgba(ef.shadowColor ?? '#000000', ef.shadowOpacity / 100)
     ctx.shadowBlur     = ef.shadowBlur
@@ -384,6 +395,7 @@ async function drawLayer(
     ctx.scale(animation.scale, animation.scale)
     ctx.translate(-W / 2, -H / 2)
     ctx.globalAlpha = totalOpacity
+    applyCompositeMode(ctx, ef)
     if (wipeClipPath) applyWipeClip(ctx, W, H, wipeClipPath)
     drawClipContent(ctx, W, H, tr, ef, animation.blurPx, clip, videoEls, imageEls, item.id)
     ctx.restore()
@@ -568,6 +580,7 @@ function drawTextOverlay(ctx: CanvasRenderingContext2D, W: number, H: number, ti
     ctx.scale(animation.scale, animation.scale)
     ctx.translate(-W / 2, -H / 2)
     ctx.globalAlpha = animation.opacity
+    applyCompositeMode(ctx, ef)
     ctx.shadowColor    = hexToRgba(ef.shadowColor ?? '#000000', ef.shadowOpacity / 100)
     ctx.shadowBlur     = ef.shadowBlur
     ctx.shadowOffsetX  = ef.shadowX
@@ -582,6 +595,7 @@ function drawTextOverlay(ctx: CanvasRenderingContext2D, W: number, H: number, ti
   ctx.scale(animation.scale, animation.scale)
   ctx.translate(-W / 2, -H / 2)
   ctx.globalAlpha = animation.opacity
+  applyCompositeMode(ctx, ef)
   drawTextContent(ctx, W, H, tr, ef, animation.blurPx, overlay, useBaseShadow)
   ctx.restore()
 }
@@ -597,6 +611,7 @@ export async function renderCanvasFrame(
   ctx.setTransform(1, 0, 0, 1, 0, 0)
   ctx.filter = 'none'
   ctx.globalAlpha = 1
+  ctx.globalCompositeOperation = 'source-over'
   ctx.fillStyle = '#000'
   ctx.fillRect(0, 0, W, H)
 

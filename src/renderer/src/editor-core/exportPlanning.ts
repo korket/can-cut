@@ -92,7 +92,8 @@ function isDefaultEffects(e: Effects) {
     near(e.grayscale, DEFAULT_EFFECTS.grayscale) &&
     near(e.sepia, DEFAULT_EFFECTS.sepia) &&
     near(e.shadowOpacity, DEFAULT_EFFECTS.shadowOpacity) &&
-    near(e.backdropBlur, DEFAULT_EFFECTS.backdropBlur)
+    near(e.backdropBlur, DEFAULT_EFFECTS.backdropBlur) &&
+    e.compositeMode === DEFAULT_EFFECTS.compositeMode
   )
 }
 
@@ -131,8 +132,8 @@ export function getNativeExportEligibility(plan: RenderPlan): NativeExportEligib
     }
 
     const effects = { ...DEFAULT_EFFECTS, ...layer.effects }
-    if (effects.shadowOpacity > 0 || effects.backdropBlur > 0) {
-      return { ok: false, reason: 'shadow or backdrop blur requires renderer export' }
+    if (effects.shadowOpacity > 0 || effects.backdropBlur > 0 || effects.compositeMode !== 'normal') {
+      return { ok: false, reason: 'advanced layer effects require renderer export' }
     }
 
     if (layer.asset.type === 'solid' && (!isDefaultTransform(transform) || !isDefaultEffects(effects))) {
