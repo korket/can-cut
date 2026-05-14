@@ -26,6 +26,46 @@ function effectsFilter(ef: Effects): string {
   ].filter(Boolean).join(' ')
 }
 
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value))
+}
+
+function applyBackdropEffect(
+  ctx: CanvasRenderingContext2D,
+  W: number,
+  H: number,
+  ef: Effects,
+  clipTime: number,
+  clipDur: number
+): void {
+  const backdropBlur = ef.backdropBlur ?? 0
+  if (backdropBlur <= 0) return
+
+  const backdropBlurFade = ef.backdropBlurFade ?? 600
+  const progress = backdropBlurFade > 0
+    ? clamp01(Math.min(clipTime / backdropBlurFade, (clipDur - clipTime) / backdropBlurFade))
+    : 1
+  if (progress <= 0) return
+
+  const off = new OffscreenCanvas(W, H)
+  off.getContext('2d')!.drawImage(ctx.canvas, 0, 0)
+
+  ctx.save()
+  ctx.filter = `blur(${backdropBlur}px)`
+  ctx.globalAlpha = progress
+  ctx.drawImage(off, 0, 0)
+  ctx.restore()
+
+  const backgroundOpacity = clamp01((ef.backdropOpacity ?? 100) / 100)
+  if (backgroundOpacity < 1) {
+    ctx.save()
+    ctx.globalAlpha = progress * (1 - backgroundOpacity)
+    ctx.fillStyle = '#000'
+    ctx.fillRect(0, 0, W, H)
+    ctx.restore()
+  }
+}
+
 export interface CanvasFrameRenderOptions {
   seekTimeoutMs?: number
 }
@@ -311,23 +351,7 @@ async function drawLayer(
 
   const { transform: tr, effects: ef, animation } = evaluateClipAtTime(item, clipTime)
 
-  // Backdrop blur: blur whatever is already on the canvas (lower layers) behind this clip
-  const backdropBlur     = ef.backdropBlur     ?? 0
-  const backdropBlurFade = ef.backdropBlurFade ?? 600
-  if (backdropBlur > 0) {
-    const bgOpacity = backdropBlurFade > 0
-      ? Math.min(clipTime / backdropBlurFade, (clipDur - clipTime) / backdropBlurFade, 1)
-      : 1
-    if (bgOpacity > 0) {
-      const off = new OffscreenCanvas(W, H)
-      off.getContext('2d')!.drawImage(ctx.canvas, 0, 0)
-      ctx.save()
-      ctx.filter = `blur(${backdropBlur}px)`
-      ctx.globalAlpha = bgOpacity
-      ctx.drawImage(off, 0, 0)
-      ctx.restore()
-    }
-  }
+  applyBackdropEffect(ctx, W, H, ef, clipTime, clipDur)
 
   const animTx = animation.translateXPct / 100 * W
   const animTy = animation.translateYPct / 100 * H
@@ -525,23 +549,7 @@ function drawTextOverlay(ctx: CanvasRenderingContext2D, W: number, H: number, ti
   const clipTime = timeMs - overlay.startTime
   const { transform: tr, effects: ef, animation } = evaluateTextOverlayAtTime(overlay, clipTime)
 
-  const backdropBlur     = ef.backdropBlur     ?? 0
-  const backdropBlurFade = ef.backdropBlurFade ?? 600
-  if (backdropBlur > 0) {
-    const clipDur = Math.max(1, overlay.endTime - overlay.startTime)
-    const bgOpacity = backdropBlurFade > 0
-      ? Math.min(clipTime / backdropBlurFade, (clipDur - clipTime) / backdropBlurFade, 1)
-      : 1
-    if (bgOpacity > 0) {
-      const off = new OffscreenCanvas(W, H)
-      off.getContext('2d')!.drawImage(ctx.canvas, 0, 0)
-      ctx.save()
-      ctx.filter = `blur(${backdropBlur}px)`
-      ctx.globalAlpha = bgOpacity
-      ctx.drawImage(off, 0, 0)
-      ctx.restore()
-    }
-  }
+  applyBackdropEffect(ctx, W, H, ef, clipTime, Math.max(1, overlay.endTime - overlay.startTime))
 
   const animTx = animation.translateXPct / 100 * W
   const animTy = animation.translateYPct / 100 * H

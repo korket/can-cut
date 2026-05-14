@@ -61,13 +61,14 @@ export interface Effects {
   shadowColor:   string  // hex
   backdropBlur:     number  // 0 = off, 1–30 px — blurs all layers rendered below this one
   backdropBlurFade: number  // fade-in/out duration in ms (0 = instant)
+  backdropOpacity:  number  // 0–100, 100 = background unchanged
 }
 
 export const DEFAULT_EFFECTS: Effects = {
   brightness: 100, contrast: 100, saturate: 100,
   hue: 0, blur: 0, opacity: 100, grayscale: 0, sepia: 0,
   shadowOpacity: 0, shadowX: 4, shadowY: 4, shadowBlur: 8, shadowColor: '#000000',
-  backdropBlur: 0, backdropBlurFade: 600,
+  backdropBlur: 0, backdropBlurFade: 600, backdropOpacity: 100,
 }
 
 export type AnimEffect =

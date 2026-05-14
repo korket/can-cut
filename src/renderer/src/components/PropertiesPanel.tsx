@@ -612,7 +612,10 @@ function EffectsSection({ effects: base, effective: e, update, clipTime, kfTrack
         <span style={{ fontSize: 11, fontWeight: 700, color: base.backdropBlur > 0 ? '#e6a030' : '#666', letterSpacing: 0.8, display: 'block', marginBottom: 6 }}>BACKDROP BLUR</span>
         <TRow label="Amount" min={0} max={30} step={0.5} value={e.backdropBlur} unit="px" onChange={v => update({ backdropBlur: v })} onReset={() => update({ backdropBlur: 0 })} kf={{ active: false, toggle: () => {} }} />
         {base.backdropBlur > 0 && (
-          <TRow label="Fade" min={0} max={3000} step={50} value={e.backdropBlurFade} unit="ms" onChange={v => update({ backdropBlurFade: v })} onReset={() => update({ backdropBlurFade: 600 })} kf={{ active: false, toggle: () => {} }} />
+          <>
+            <TRow label="Background" min={0} max={100} step={1} value={e.backdropOpacity} unit="%" onChange={v => update({ backdropOpacity: v })} onReset={() => update({ backdropOpacity: 100 })} kf={{ active: false, toggle: () => {} }} />
+            <TRow label="Fade" min={0} max={3000} step={50} value={e.backdropBlurFade} unit="ms" onChange={v => update({ backdropBlurFade: v })} onReset={() => update({ backdropBlurFade: 600 })} kf={{ active: false, toggle: () => {} }} />
+          </>
         )}
       </div>
 
