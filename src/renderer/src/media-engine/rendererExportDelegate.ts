@@ -1,12 +1,13 @@
 import type { ExportProfile } from '../editor-core/exportSettings'
 import type { RenderPlan } from '../editor-core/renderPlan'
-import { renderPlanToCanvasExport } from './canvasExport'
+import { canvasExportRenderer } from './canvasExport'
 
 interface RendererExportPayload {
   jobId: string
   outputPath: string
   plan: RenderPlan
   profile: ExportProfile
+  cacheKey?: string
 }
 
 let started = false
@@ -47,17 +48,18 @@ export function startRendererExportDelegate(): void {
     canceledJobs.delete(payload.jobId)
 
     try {
-      const result = await renderPlanToCanvasExport(
+      const result = await canvasExportRenderer.export(
         payload.jobId,
         payload.plan,
+        payload.profile,
         (pct) => {
           void reportRendererExportProgress(payload.jobId, pct)
         },
         {
           isCanceled: () => canceledJobs.has(payload.jobId),
           outputPath: payload.outputPath,
-        },
-        payload.profile.encoder
+          cacheKey: payload.cacheKey,
+        }
       )
 
       await completeRendererExport(payload.jobId, result)

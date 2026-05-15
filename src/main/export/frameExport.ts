@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from 'child_process'
+import { appendVideoEncoderArgs, describeVideoEncoder } from './encoderOptions'
 import { ffmpegPath, hasAudioStream } from './ffmpegRuntime'
 import type { ExportEngineHost, FrameAudioSource, FrameClip, FrameExportOptions, FrameItem } from './types'
 
@@ -56,10 +57,11 @@ function buildFrameExportArgs(options: FrameExportOptions, audioSources: FrameAu
 
     parts.push(`${audioLabels.join('')}amix=inputs=${audioLabels.length}:normalize=0:duration=longest[aout]`)
     args.push('-filter_complex', parts.join(';'))
-    args.push('-map', '0:v', '-c:v', encoder.videoCodec, '-pix_fmt', encoder.pixelFormat, '-preset', encoder.x264Preset, '-crf', String(encoder.crf), '-threads', '0')
+    args.push('-map', '0:v')
+    appendVideoEncoderArgs(args, encoder)
     args.push('-map', '[aout]', '-c:a', encoder.audioCodec, '-b:a', encoder.audioBitrate)
   } else {
-    args.push('-c:v', encoder.videoCodec, '-pix_fmt', encoder.pixelFormat, '-preset', encoder.x264Preset, '-crf', String(encoder.crf), '-threads', '0')
+    appendVideoEncoderArgs(args, encoder)
   }
 
   args.push(outPath)
@@ -120,7 +122,7 @@ export function createFrameExportController(host: ExportEngineHost) {
         closeWaiters: [],
       }
 
-      host.emitLog(jobId, `Starting frame export: ${options.W}x${options.H} @ ${options.fps} fps, ${options.encoder.x264Preset}, CRF ${options.encoder.crf}, ${options.encoder.framePipeFormat} pipe`)
+      host.emitLog(jobId, `Starting frame export: ${options.W}x${options.H} @ ${options.fps} fps, ${describeVideoEncoder(options.encoder)}, ${options.encoder.framePipeFormat} pipe`)
       host.emitLog(jobId, `FFmpeg frame command: ${args.join(' ')}`)
 
       proc.on('error', (err) => {

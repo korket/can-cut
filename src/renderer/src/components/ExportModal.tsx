@@ -1,5 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
-import { DEFAULT_EXPORT_PROFILE, EXPORT_PROFILES, getExportProfile, type ExportProfileId } from '../editor-core/exportSettings'
+import {
+  DEFAULT_EXPORT_PROFILE,
+  EXPORT_PROFILES,
+  VIDEO_ENCODERS,
+  getExportProfile,
+  getVideoEncoderOption,
+  withVideoCodec,
+  type ExportProfileId,
+  type ExportVideoCodec,
+} from '../editor-core/exportSettings'
 import { buildExportPreflight } from '../editor-core/exportPreflight'
 import { createRenderPlan } from '../editor-core/renderPlan'
 import { isTerminalExportStatus } from '../media-engine/exportJob'
@@ -31,17 +40,36 @@ function formatDuration(ms: number | undefined) {
   return `${(ms / 1000).toFixed(1)}s`
 }
 
+function formatBytes(bytes: number | undefined) {
+  if (bytes == null) return '-'
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
+}
+
 export default function ExportModal({ onClose }: Props) {
   const { clips, timelineItems, textOverlays, getTimelineDuration } = useEditorStore()
   const [resolution, setResolution] = useState('1920x1080')
   const [fps, setFps] = useState(30)
   const [profileId, setProfileId] = useState<ExportProfileId>(DEFAULT_EXPORT_PROFILE.id)
+  const [videoCodec, setVideoCodec] = useState<ExportVideoCodec>('libx264')
+  const [availableVideoEncoders, setAvailableVideoEncoders] = useState<string[] | null>(null)
   const [jobs, setJobs] = useState<ExportJobSnapshot[]>(() => exportJobManager.getJobs())
   const [selectedJobId, setSelectedJobId] = useState<string | null>(() => exportJobManager.getLatestActiveJob()?.id ?? null)
   const [startError, setStartError] = useState<string | null>(null)
 
   const selectedJob = selectedJobId ? jobs.find((job) => job.id === selectedJobId) ?? null : null
-  const selectedProfile = getExportProfile(profileId)
+  const selectedProfile = useMemo(
+    () => withVideoCodec(getExportProfile(profileId), videoCodec),
+    [profileId, videoCodec]
+  )
+  const selectedVideoEncoder = getVideoEncoderOption(selectedProfile.encoder.videoCodec)
+  const videoEncoderOptions = useMemo(() => {
+    if (!availableVideoEncoders) return VIDEO_ENCODERS
+    const available = new Set(availableVideoEncoders)
+    return VIDEO_ENCODERS.filter((encoder) => encoder.codec === 'libx264' || available.has(encoder.codec))
+  }, [availableVideoEncoders])
+  const hasHardwareEncoderOption = videoEncoderOptions.some((encoder) => encoder.codec !== 'libx264')
   const currentRenderPlan = useMemo(
     () => createRenderPlan({ resolution, fps, duration: getTimelineDuration(), timelineItems, clips, textOverlays }),
     [resolution, fps, getTimelineDuration, timelineItems, clips, textOverlays]
@@ -51,11 +79,15 @@ export default function ExportModal({ onClose }: Props) {
     [currentRenderPlan, selectedProfile]
   )
   const selectedResult = selectedJob?.result && !selectedJob.result.canceled ? selectedJob.result : null
+  const selectedTrace = selectedResult?.trace
   const selectedLogs = selectedJob?.logs.slice(-8) ?? []
   const selectedIssues = selectedJob?.validation?.issues ?? []
   const selectedTiming = selectedJob?.timing
   const selectedJobActive = selectedJob ? !isTerminalExportStatus(selectedJob.status) : false
   const hasActiveJob = jobs.some((job) => !isTerminalExportStatus(job.status))
+  const backendDetail = currentPreflight.backend === 'ffmpeg-native'
+    ? 'Fast path: FFmpeg renders supported edits directly and avoids canvas frame transfer.'
+    : currentPreflight.backendReason ?? 'Canvas fallback: timeline requires renderer-only features.'
 
   useEffect(() => {
     function syncJobs() {
@@ -65,6 +97,19 @@ export default function ExportModal({ onClose }: Props) {
     syncJobs()
     return exportJobManager.subscribe(syncJobs)
   }, [])
+
+  useEffect(() => {
+    let canceled = false
+    window.api.listVideoEncoders()
+      .then((encoders) => { if (!canceled) setAvailableVideoEncoders(encoders) })
+      .catch(() => { if (!canceled) setAvailableVideoEncoders([]) })
+    return () => { canceled = true }
+  }, [])
+
+  useEffect(() => {
+    if (videoEncoderOptions.some((encoder) => encoder.codec === videoCodec)) return
+    setVideoCodec('libx264')
+  }, [videoEncoderOptions, videoCodec])
 
   useEffect(() => {
     if (selectedJobId && jobs.some((job) => job.id === selectedJobId)) return
@@ -127,6 +172,20 @@ export default function ExportModal({ onClose }: Props) {
           </select>
         </div>
 
+        <div style={styles.field}>
+          <label style={styles.label}>Encoder</label>
+          <select style={styles.select} value={videoCodec} onChange={(e) => setVideoCodec(e.target.value as ExportVideoCodec)}>
+            {videoEncoderOptions.map((encoder) => (
+              <option key={encoder.codec} value={encoder.codec}>{encoder.label} - {encoder.description}</option>
+            ))}
+          </select>
+          <div style={styles.helpText}>
+            {availableVideoEncoders && !hasHardwareEncoderOption
+              ? 'Bundled FFmpeg did not report hardware H.264 encoders on this system.'
+              : selectedVideoEncoder.description}
+          </div>
+        </div>
+
         <button style={styles.exportBtn} onClick={handleExport} disabled={timelineItems.length === 0}>
           {timelineItems.length === 0 ? 'No clips on timeline' : hasActiveJob ? 'Queue Export' : 'Export MP4'}
         </button>
@@ -139,6 +198,11 @@ export default function ExportModal({ onClose }: Props) {
             <span style={styles.preflightLabel}>Backend</span>
             <span style={styles.preflightValue}>{currentPreflight.backend === 'ffmpeg-native' ? 'Fast native FFmpeg' : 'Canvas render'}</span>
           </div>
+          <div style={styles.preflightDetail}>{backendDetail}</div>
+          <div style={styles.preflightRow}>
+            <span style={styles.preflightLabel}>Encoder</span>
+            <span style={styles.preflightValue}>{selectedVideoEncoder.label}</span>
+          </div>
           <div style={styles.preflightRow}>
             <span style={styles.preflightLabel}>Frames</span>
             <span style={styles.preflightValue}>{currentPreflight.frameCount.toLocaleString()} at {currentPreflight.fps} fps</span>
@@ -149,7 +213,7 @@ export default function ExportModal({ onClose }: Props) {
           </div>
           <div style={styles.preflightRow}>
             <span style={styles.preflightLabel}>Frame Pipe</span>
-            <span style={styles.preflightValue}>{currentPreflight.framePipeFormat === 'raw-rgba' ? 'Raw RGBA' : 'MJPEG'}</span>
+            <span style={styles.preflightValue}>{currentPreflight.backend === 'ffmpeg-native' ? 'Not used' : currentPreflight.framePipeFormat === 'raw-rgba' ? 'Raw RGBA' : 'MJPEG'}</span>
           </div>
           {currentPreflight.warnings.length > 0 && (
             <div style={styles.warningList}>
@@ -223,6 +287,43 @@ export default function ExportModal({ onClose }: Props) {
           </div>
         )}
 
+        {selectedTrace && (
+          <div style={styles.exportStats}>
+            <div style={styles.preflightRow}>
+              <span style={styles.preflightLabel}>Plan Hash</span>
+              <span style={styles.preflightValue}>{selectedTrace.planHash ?? '-'}</span>
+            </div>
+            <div style={styles.preflightRow}>
+              <span style={styles.preflightLabel}>Cache Key</span>
+              <span style={styles.preflightValue}>{selectedTrace.cacheKey ?? '-'}</span>
+            </div>
+            <div style={styles.preflightRow}>
+              <span style={styles.preflightLabel}>Media Load</span>
+              <span style={styles.preflightValue}>{formatDuration(selectedTrace.mediaLoadMs)}</span>
+            </div>
+            <div style={styles.preflightRow}>
+              <span style={styles.preflightLabel}>Frame Render</span>
+              <span style={styles.preflightValue}>{formatDuration(selectedTrace.frameRenderMs)}</span>
+            </div>
+            <div style={styles.preflightRow}>
+              <span style={styles.preflightLabel}>Readback / Encode</span>
+              <span style={styles.preflightValue}>{formatDuration(selectedTrace.frameReadbackMs)}</span>
+            </div>
+            <div style={styles.preflightRow}>
+              <span style={styles.preflightLabel}>IPC / Pipe Transfer</span>
+              <span style={styles.preflightValue}>{formatDuration(selectedTrace.frameTransferMs)}</span>
+            </div>
+            <div style={styles.preflightRow}>
+              <span style={styles.preflightLabel}>Encoder Finalize</span>
+              <span style={styles.preflightValue}>{formatDuration(selectedTrace.encoderFinalizeMs)}</span>
+            </div>
+            <div style={styles.preflightRow}>
+              <span style={styles.preflightLabel}>Frame Data</span>
+              <span style={styles.preflightValue}>{selectedTrace.frameCount ?? '-'} frames | {formatBytes(selectedTrace.frameBytes)}</span>
+            </div>
+          </div>
+        )}
+
         {jobs.length > 0 && (
           <div style={styles.jobList}>
             {jobs.map((job) => {
@@ -243,7 +344,7 @@ export default function ExportModal({ onClose }: Props) {
                 >
                   <div style={styles.jobMain}>
                     <span style={styles.jobName}>{jobTitle(job)}</span>
-                    <span style={styles.jobMeta}>{jobStatusLabel(job)} | {job.profile.label} | {job.preflight.frameCount.toLocaleString()} frames | {job.mode === 'native' ? 'fast path' : 'canvas render'}</span>
+                    <span style={styles.jobMeta}>{jobStatusLabel(job)} | {job.profile.label} | {getVideoEncoderOption(job.profile.encoder.videoCodec).label} | {job.preflight.frameCount.toLocaleString()} frames | {job.mode === 'native' ? 'fast path' : 'canvas render'}</span>
                   </div>
 
                   <div style={styles.jobProgress}>
@@ -298,9 +399,11 @@ const styles: Record<string, React.CSSProperties> = {
   field: { display: 'flex', flexDirection: 'column', gap: 8 },
   label: { fontSize: 14, color: '#aaa' },
   select: { background: '#2a2a2a', border: '1px solid #444', color: '#fff', padding: '8px 12px', borderRadius: 7, fontSize: 14 },
+  helpText: { fontSize: 12, color: '#777', lineHeight: 1.4 },
   exportBtn: { background: '#e63950', border: 'none', color: '#fff', padding: '12px', borderRadius: 8, cursor: 'pointer', fontSize: 15, fontWeight: 700 },
   preflight: { display: 'flex', flexDirection: 'column', gap: 8, background: '#181818', border: '1px solid #333', borderRadius: 7, padding: 12 },
   preflightRow: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  preflightDetail: { fontSize: 12, color: '#888', lineHeight: 1.4, borderTop: '1px solid #2a2a2a', paddingTop: 8, marginTop: 2 },
   preflightLabel: { fontSize: 12, color: '#777' },
   preflightValue: { fontSize: 12, color: '#ddd', textAlign: 'right' },
   warningList: { display: 'flex', flexDirection: 'column', gap: 5, borderTop: '1px solid #2a2a2a', paddingTop: 8 },

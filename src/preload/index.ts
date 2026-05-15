@@ -5,6 +5,7 @@ const isExportWorker = new URLSearchParams(globalThis.location.search).get('expo
 const appApi = {
   openFiles:    () => ipcRenderer.invoke('dialog:openFiles'),
   getVideoInfo: (path: string) => ipcRenderer.invoke('ffprobe:getInfo', path),
+  listVideoEncoders: () => ipcRenderer.invoke('ffmpeg:listVideoEncoders'),
   getThumbnail: (path: string, timeMs: number) => ipcRenderer.invoke('ffmpeg:thumbnail', path, timeMs),
   validateMediaPaths: (paths: string[]) => ipcRenderer.invoke('media:validatePaths', paths),
   resolveMediaImportPaths: (paths: string[]) => ipcRenderer.invoke('media:resolveImportPaths', paths),

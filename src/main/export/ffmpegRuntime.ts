@@ -1,3 +1,4 @@
+import { execFile } from 'child_process'
 import { join } from 'path'
 import ffmpeg from 'fluent-ffmpeg'
 import ffmpegPath from 'ffmpeg-static'
@@ -7,6 +8,29 @@ if (ffmpegPath) ffmpeg.setFfmpegPath(ffmpegPath)
 ffmpeg.setFfprobePath(ffprobePath.path)
 
 export { ffmpeg, ffmpegPath }
+
+let videoEncoderCache: Promise<string[]> | null = null
+
+export function listVideoEncoders(): Promise<string[]> {
+  if (!ffmpegPath) return Promise.resolve([])
+  if (videoEncoderCache) return videoEncoderCache
+
+  videoEncoderCache = new Promise((resolve) => {
+    execFile(ffmpegPath, ['-hide_banner', '-encoders'], { windowsHide: true }, (_err, stdout, stderr) => {
+      const output = `${stdout}\n${stderr}`
+      const encoders = new Set<string>()
+
+      for (const line of output.split(/\r?\n/)) {
+        const match = /^\s*V\S*\s+(\S+)/.exec(line)
+        if (match) encoders.add(match[1])
+      }
+
+      resolve([...encoders].sort())
+    })
+  })
+
+  return videoEncoderCache
+}
 
 export function ffprobe(filePath: string): Promise<unknown> {
   return new Promise((resolve, reject) => {

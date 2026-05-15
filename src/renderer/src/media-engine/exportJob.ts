@@ -3,6 +3,8 @@ import { buildExportPreflight, type ExportPreflight } from '../editor-core/expor
 import { DEFAULT_EXPORT_PROFILE, type ExportProfile } from '../editor-core/exportSettings'
 import { getExportMediaPaths, type ExportValidationReport } from '../editor-core/exportValidation'
 import type { RenderPlan } from '../editor-core/renderPlan'
+import { createRenderCacheDescriptor, createRenderCacheKey } from './renderCache'
+import type { ExportTraceMetrics } from './renderEngine'
 
 export type ExportJobMode = 'native' | 'renderer'
 export type ExportJobStatus = 'queued' | 'running' | 'canceling' | 'completed' | 'failed' | 'canceled' | 'interrupted'
@@ -29,6 +31,7 @@ export interface ExportJobResult {
   path?: string
   error?: string
   canceled?: boolean
+  trace?: ExportTraceMetrics
 }
 
 export interface ExportJobLogEntry {
@@ -54,6 +57,7 @@ export interface ExportJobStartRequest {
   preflight: ExportPreflight
   nativeOptions: NativeExportOptions
   mediaPaths: string[]
+  cacheKey?: string
 }
 
 export function isTerminalExportStatus(status: ExportJobStatus): boolean {
@@ -64,11 +68,15 @@ export function createExportJobStartRequest(
   plan: RenderPlan,
   profile: ExportProfile = DEFAULT_EXPORT_PROFILE
 ): ExportJobStartRequest {
+  const preflight = buildExportPreflight(plan, profile)
   return {
     plan,
     profile,
-    preflight: buildExportPreflight(plan, profile),
+    preflight,
     nativeOptions: buildNativeExportOptions(plan, profile.encoder),
     mediaPaths: getExportMediaPaths(plan),
+    cacheKey: preflight.backend === 'renderer-canvas'
+      ? createRenderCacheKey(createRenderCacheDescriptor(plan, profile, 'renderer-canvas'))
+      : undefined,
   }
 }

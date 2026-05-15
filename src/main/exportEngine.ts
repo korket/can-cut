@@ -1,4 +1,4 @@
-import { createThumbnail, ffprobe } from './export/ffmpegRuntime'
+import { createThumbnail, ffprobe, listVideoEncoders } from './export/ffmpegRuntime'
 import { createFrameExportController } from './export/frameExport'
 import { createNativeExportController } from './export/nativeExport'
 import type { ExportEngineHost, ExportOptions, FrameExportOptions } from './export/types'
@@ -11,6 +11,7 @@ export function createExportEngine(host: ExportEngineHost) {
 
   return {
     ffprobe,
+    listVideoEncoders,
 
     createThumbnail(filePath: string, timeMs: number) {
       return createThumbnail(filePath, timeMs, host.getTempPath())

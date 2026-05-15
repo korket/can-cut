@@ -1,6 +1,6 @@
-import { randomUUID } from 'crypto'
+import { createHash, randomUUID } from 'crypto'
 import { constants, promises as fs } from 'fs'
-import { dirname } from 'path'
+import { dirname, join } from 'path'
 import type { createExportEngine } from '../exportEngine'
 import {
   isExportJobSnapshot,
@@ -11,6 +11,7 @@ import {
   type ExportJobSnapshot,
   type ExportJobStartRequest,
   type ExportJobStatus,
+  type ExportTraceMetrics,
   type ExportValidationIssue,
   type ExportValidationReport,
   type RenderBackend,
@@ -54,6 +55,50 @@ function isTerminalExportStatus(status: ExportJobStatus): boolean {
 
 function nowMs(): number {
   return Date.now()
+}
+
+function formatDurationMs(value: number | undefined): string {
+  if (value == null) return '-'
+  if (value < 1000) return `${Math.round(value)}ms`
+  return `${(value / 1000).toFixed(1)}s`
+}
+
+function formatBytes(value: number | undefined): string {
+  if (value == null) return '-'
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
+  if (value < 1024 * 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`
+  return `${(value / 1024 / 1024 / 1024).toFixed(2)} GB`
+}
+
+function formatTraceSummary(trace: ExportTraceMetrics): string {
+  return [
+    `frames ${trace.frameCount ?? '-'}`,
+    `render ${formatDurationMs(trace.frameRenderMs)}`,
+    `readback ${formatDurationMs(trace.frameReadbackMs)}`,
+    `transfer ${formatDurationMs(trace.frameTransferMs)}`,
+    `finalize ${formatDurationMs(trace.encoderFinalizeMs)}`,
+    `media ${formatDurationMs(trace.mediaLoadMs)}`,
+    `bytes ${formatBytes(trace.frameBytes)}`,
+    trace.cacheKey ? `cache ${trace.cacheKey}` : null,
+    trace.planHash ? `plan ${trace.planHash}` : null,
+  ].filter(Boolean).join(', ')
+}
+
+function hashCacheKey(cacheKey: string): string {
+  return createHash('sha256').update(cacheKey).digest('hex')
+}
+
+async function copyFileAtomic(sourcePath: string, targetPath: string): Promise<void> {
+  await fs.mkdir(dirname(targetPath), { recursive: true })
+  const tempPath = `${targetPath}.${process.pid}.${randomUUID()}.tmp`
+  await fs.copyFile(sourcePath, tempPath)
+  try {
+    await fs.rm(targetPath, { force: true }).catch(() => {})
+    await fs.rename(tempPath, targetPath)
+  } catch (error) {
+    await fs.unlink(tempPath).catch(() => {})
+    throw error
+  }
 }
 
 function toSnapshot(entry: ManagedExportJob): ExportJobSnapshot {
@@ -127,6 +172,10 @@ export class ExportJobService {
   private persistPromise: Promise<void> = Promise.resolve()
 
   constructor(private readonly host: ExportJobServiceHost) {}
+
+  private getRenderCachePath(cacheKey: string): string {
+    return join(dirname(this.host.storagePath), 'render-cache', `${hashCacheKey(cacheKey)}.mp4`)
+  }
 
   async restore(): Promise<void> {
     try {
@@ -300,9 +349,11 @@ export class ExportJobService {
       }
 
       const exportStart = nowMs()
-      const result = job.backend === 'ffmpeg-native'
+      const cachedResult = await this.tryReuseRenderCache(entry)
+      const result = cachedResult ?? (job.backend === 'ffmpeg-native'
         ? await this.host.engine.exportVideo(job.id, request.nativeOptions)
-        : await this.runRendererExport(entry)
+        : await this.runRendererExport(entry))
+      if (!cachedResult && result.success) await this.storeRenderCache(entry, result)
 
       job.timing.exportMs = nowMs() - exportStart
       this.settle(entry, result)
@@ -390,6 +441,7 @@ export class ExportJobService {
         outputPath: entry.job.outputPath!,
         plan: request.plan,
         profile: request.profile,
+        cacheKey: request.cacheKey,
       } satisfies RendererExportJobRequest)
 
       if (!sent) {
@@ -399,10 +451,56 @@ export class ExportJobService {
     })
   }
 
+  private async tryReuseRenderCache(entry: ManagedExportJob): Promise<ExportJobResult | null> {
+    const request = entry.request
+    const cacheKey = request?.cacheKey
+    const outputPath = entry.job.outputPath
+    if (!request || entry.job.backend !== 'renderer-canvas' || !cacheKey || !outputPath) return null
+
+    const cachePath = this.getRenderCachePath(cacheKey)
+    const start = nowMs()
+
+    try {
+      const stat = await fs.stat(cachePath)
+      if (!stat.isFile()) return null
+      await copyFileAtomic(cachePath, outputPath)
+      this.addLog(entry, `Render cache hit: ${cacheKey}`)
+      return {
+        success: true,
+        path: outputPath,
+        trace: {
+          cacheKey,
+          totalMs: nowMs() - start,
+          frameCount: request.preflight.frameCount,
+        },
+      }
+    } catch {
+      this.addLog(entry, `Render cache miss: ${cacheKey}`)
+      return null
+    }
+  }
+
+  private async storeRenderCache(entry: ManagedExportJob, result: ExportJobResult): Promise<void> {
+    const request = entry.request
+    const cacheKey = request?.cacheKey ?? result.trace?.cacheKey
+    if (entry.job.backend !== 'renderer-canvas' || !cacheKey || !result.path) return
+
+    try {
+      await copyFileAtomic(result.path, this.getRenderCachePath(cacheKey))
+      this.addLog(entry, `Stored render cache: ${cacheKey}`)
+    } catch (error: unknown) {
+      this.addLog(entry, `Render cache store failed: ${String(error)}`)
+    }
+  }
+
   private settle(entry: ManagedExportJob, result: ExportJobResult): void {
     const { job } = entry
 
     entry.result = result
+
+    if (result.trace) {
+      this.addLog(entry, `Export trace: ${formatTraceSummary(result.trace)}`)
+    }
 
     if (result.canceled || entry.cancelRequested) {
       job.status = 'canceled'

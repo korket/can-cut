@@ -32,8 +32,27 @@ export interface ExportEffects {
   sepia: number
 }
 
+export type ExportTransitionType = 'cut' | 'crossfade' | 'fade-color' | 'wipe-left' | 'wipe-right' | 'wipe-up' | 'wipe-down'
+
+export interface ExportTransition {
+  type: ExportTransitionType
+  duration: number
+  color: string
+}
+
+export type ExportAnimationEffect = 'none' | 'fade' | 'zoom-in' | 'zoom-out' | 'slide-left' | 'slide-right' | 'slide-up' | 'slide-down' | 'blur-in' | 'blur-out'
+
+export interface ExportAnimation {
+  inEffect: ExportAnimationEffect
+  inDuration: number
+  outEffect: ExportAnimationEffect
+  outDuration: number
+}
+
+export type ExportVideoCodec = 'libx264' | 'h264_nvenc' | 'h264_qsv' | 'h264_amf'
+
 export interface ExportEncoderSettings {
-  videoCodec: 'libx264'
+  videoCodec: ExportVideoCodec
   x264Preset: 'ultrafast' | 'veryfast' | 'fast' | 'medium' | 'slow'
   crf: number
   pixelFormat: 'yuv420p'
@@ -56,14 +75,20 @@ export interface ClipExportInfo {
   clipHeight: number
   transform: ExportTransform
   effects: ExportEffects
+  transitionIn?: ExportTransition
+  animation?: ExportAnimation
 }
 
 export interface TextOverlayExportInfo {
   text: string
+  fontFamily: string
   color: string
   fontSize: number
   x: number
   y: number
+  bold: boolean
+  italic: boolean
+  animation?: ExportAnimation
   startTime: number
   endTime: number
 }

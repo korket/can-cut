@@ -79,6 +79,21 @@ export interface ExportJobResult {
   path?: string
   error?: string
   canceled?: boolean
+  trace?: ExportTraceMetrics
+}
+
+export interface ExportTraceMetrics {
+  planHash?: string
+  cacheKey?: string
+  mediaLoadMs?: number
+  encoderStartMs?: number
+  frameRenderMs?: number
+  frameReadbackMs?: number
+  frameTransferMs?: number
+  encoderFinalizeMs?: number
+  totalMs?: number
+  frameCount?: number
+  frameBytes?: number
 }
 
 export interface ExportJobLogEntry {
@@ -98,6 +113,7 @@ export interface ExportJobStartRequest {
   nativeOptions: ExportOptions
   mediaPaths: string[]
   outputPath?: string
+  cacheKey?: string
 }
 
 export interface RendererExportJobRequest {
@@ -105,6 +121,7 @@ export interface RendererExportJobRequest {
   outputPath: string
   plan: unknown
   profile: ExportProfileSnapshot
+  cacheKey?: string
 }
 
 type GuardResult<T> =
@@ -140,7 +157,7 @@ function isFramePipeFormat(value: unknown): value is 'raw-rgba' | 'mjpeg' {
 }
 
 function isVideoCodec(value: unknown): value is ExportOptions['encoder']['videoCodec'] {
-  return value === 'libx264'
+  return value === 'libx264' || value === 'h264_nvenc' || value === 'h264_qsv' || value === 'h264_amf'
 }
 
 function isX264Preset(value: unknown): value is ExportOptions['encoder']['x264Preset'] {
@@ -210,6 +227,29 @@ function isClipType(value: unknown): value is ExportOptions['clips'][number]['ty
   return value === 'video' || value === 'audio' || value === 'image' || value === 'solid'
 }
 
+function isTransitionType(value: unknown): value is NonNullable<ExportOptions['clips'][number]['transitionIn']>['type'] {
+  return value === 'cut' || value === 'crossfade' || value === 'fade-color' || value === 'wipe-left' || value === 'wipe-right' || value === 'wipe-up' || value === 'wipe-down'
+}
+
+function isTransition(value: unknown): value is NonNullable<ExportOptions['clips'][number]['transitionIn']> {
+  if (!isObject(value)) return false
+  return isTransitionType(value.type) && isNonNegativeNumber(value.duration) && isString(value.color)
+}
+
+function isAnimationEffect(value: unknown): value is NonNullable<ExportOptions['clips'][number]['animation']>['inEffect'] {
+  return value === 'none' || value === 'fade' || value === 'zoom-in' || value === 'zoom-out' || value === 'slide-left' || value === 'slide-right' || value === 'slide-up' || value === 'slide-down' || value === 'blur-in' || value === 'blur-out'
+}
+
+function isAnimation(value: unknown): value is NonNullable<ExportOptions['clips'][number]['animation']> {
+  if (!isObject(value)) return false
+  return (
+    isAnimationEffect(value.inEffect) &&
+    isNonNegativeNumber(value.inDuration) &&
+    isAnimationEffect(value.outEffect) &&
+    isNonNegativeNumber(value.outDuration)
+  )
+}
+
 function isExportClip(value: unknown): value is ExportOptions['clips'][number] {
   if (!isObject(value)) return false
   return (
@@ -224,7 +264,9 @@ function isExportClip(value: unknown): value is ExportOptions['clips'][number] {
     isFiniteNumber(value.clipWidth) &&
     isFiniteNumber(value.clipHeight) &&
     isTransform(value.transform) &&
-    isEffects(value.effects)
+    isEffects(value.effects) &&
+    (value.transitionIn == null || isTransition(value.transitionIn)) &&
+    (value.animation == null || isAnimation(value.animation))
   )
 }
 
@@ -232,10 +274,14 @@ function isTextOverlay(value: unknown): value is ExportOptions['textOverlays'][n
   if (!isObject(value)) return false
   return (
     isString(value.text) &&
+    isString(value.fontFamily) &&
     isString(value.color) &&
     isPositiveNumber(value.fontSize) &&
     isFiniteNumber(value.x) &&
     isFiniteNumber(value.y) &&
+    typeof value.bold === 'boolean' &&
+    typeof value.italic === 'boolean' &&
+    (value.animation == null || isAnimation(value.animation)) &&
     isNonNegativeNumber(value.startTime) &&
     isNonNegativeNumber(value.endTime)
   )
@@ -363,7 +409,25 @@ export function isExportJobResult(value: unknown): value is ExportJobResult {
     (value.success == null || typeof value.success === 'boolean') &&
     (value.path == null || isString(value.path)) &&
     (value.error == null || isString(value.error)) &&
-    (value.canceled == null || typeof value.canceled === 'boolean')
+    (value.canceled == null || typeof value.canceled === 'boolean') &&
+    (value.trace == null || isExportTraceMetrics(value.trace))
+  )
+}
+
+function isExportTraceMetrics(value: unknown): value is ExportTraceMetrics {
+  if (!isObject(value)) return false
+  return (
+    (value.planHash == null || isString(value.planHash)) &&
+    (value.cacheKey == null || isString(value.cacheKey)) &&
+    (value.mediaLoadMs == null || isNonNegativeNumber(value.mediaLoadMs)) &&
+    (value.encoderStartMs == null || isNonNegativeNumber(value.encoderStartMs)) &&
+    (value.frameRenderMs == null || isNonNegativeNumber(value.frameRenderMs)) &&
+    (value.frameReadbackMs == null || isNonNegativeNumber(value.frameReadbackMs)) &&
+    (value.frameTransferMs == null || isNonNegativeNumber(value.frameTransferMs)) &&
+    (value.encoderFinalizeMs == null || isNonNegativeNumber(value.encoderFinalizeMs)) &&
+    (value.totalMs == null || isNonNegativeNumber(value.totalMs)) &&
+    (value.frameCount == null || isNonNegativeNumber(value.frameCount)) &&
+    (value.frameBytes == null || isNonNegativeNumber(value.frameBytes))
   )
 }
 
@@ -378,6 +442,9 @@ export function validateExportJobStartRequest(value: unknown): GuardResult<Expor
   }
   if (value.outputPath != null && !isString(value.outputPath)) {
     return { ok: false, error: 'Export request has an invalid output path.' }
+  }
+  if (value.cacheKey != null && !isString(value.cacheKey)) {
+    return { ok: false, error: 'Export request has an invalid cache key.' }
   }
 
   return { ok: true, value: value as unknown as ExportJobStartRequest }

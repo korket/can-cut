@@ -25,7 +25,7 @@ export interface ExportPreflight {
   warnings: ExportPreflightWarning[]
 }
 
-function createWarnings(plan: RenderPlan, backend: RenderBackend, backendReason: string | undefined, frameCount: number): ExportPreflightWarning[] {
+function createWarnings(plan: RenderPlan, profile: ExportProfile, backend: RenderBackend, backendReason: string | undefined, frameCount: number): ExportPreflightWarning[] {
   const warnings: ExportPreflightWarning[] = []
   const pixelCount = plan.resolution.width * plan.resolution.height
 
@@ -47,6 +47,10 @@ function createWarnings(plan: RenderPlan, backend: RenderBackend, backendReason:
 
   if (frameCount > 10000) {
     warnings.push({ code: 'large-frame-count', message: 'Long exports create many frames and can take a while.' })
+  }
+
+  if (profile.encoder.videoCodec !== 'libx264') {
+    warnings.push({ code: 'hardware-encoder', message: 'Hardware encoding requires a compatible GPU, driver, and FFmpeg encoder.' })
   }
 
   return warnings
@@ -72,6 +76,6 @@ export function buildExportPreflight(plan: RenderPlan, profile: ExportProfile): 
     textLayerCount: plan.textLayers.length,
     pixelCountPerFrame,
     totalPixelCount: pixelCountPerFrame * frameCount,
-    warnings: createWarnings(plan, backendPlan.backend, backendPlan.reason, frameCount),
+    warnings: createWarnings(plan, profile, backendPlan.backend, backendPlan.reason, frameCount),
   }
 }

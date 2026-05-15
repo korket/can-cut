@@ -34,7 +34,7 @@ interface MediaImportEntry {
 }
 
 interface ExportEncoderSettings {
-  videoCodec: 'libx264'
+  videoCodec: 'libx264' | 'h264_nvenc' | 'h264_qsv' | 'h264_amf'
   x264Preset: 'ultrafast' | 'veryfast' | 'fast' | 'medium' | 'slow'
   crf: number
   pixelFormat: 'yuv420p'
@@ -120,6 +120,20 @@ interface FrameExportFinishResult {
   canceled?: boolean
 }
 
+interface ExportTraceMetrics {
+  planHash?: string
+  cacheKey?: string
+  mediaLoadMs?: number
+  encoderStartMs?: number
+  frameRenderMs?: number
+  frameReadbackMs?: number
+  frameTransferMs?: number
+  encoderFinalizeMs?: number
+  totalMs?: number
+  frameCount?: number
+  frameBytes?: number
+}
+
 type ExportCancelResult =
   | { ok: true }
   | { error: string }
@@ -129,12 +143,14 @@ interface ExportResult {
   path?: string
   error?: string
   canceled?: boolean
+  trace?: ExportTraceMetrics
 }
 
 interface RendererExportJobPayload {
   jobId: string
   outputPath: string
   plan: any
+  cacheKey?: string
   profile: {
     id: string
     label: string
@@ -147,6 +163,7 @@ interface Window {
   api: {
     openFiles: () => Promise<string[]>
     getVideoInfo: (path: string) => Promise<any>
+    listVideoEncoders: () => Promise<string[]>
     getThumbnail: (path: string, timeMs: number) => Promise<string>
     validateMediaPaths: (paths: string[]) => Promise<MediaPathValidationResult[]>
     resolveMediaImportPaths: (paths: string[]) => Promise<MediaImportEntry[]>

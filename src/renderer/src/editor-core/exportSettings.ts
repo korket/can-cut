@@ -1,7 +1,14 @@
 export type ExportProfileId = 'draft' | 'balanced' | 'high'
+export type ExportVideoCodec = 'libx264' | 'h264_nvenc' | 'h264_qsv' | 'h264_amf'
+
+export interface ExportVideoEncoderOption {
+  codec: ExportVideoCodec
+  label: string
+  description: string
+}
 
 export interface ExportEncoderSettings {
-  videoCodec: 'libx264'
+  videoCodec: ExportVideoCodec
   x264Preset: 'ultrafast' | 'veryfast' | 'fast' | 'medium' | 'slow'
   crf: number
   pixelFormat: 'yuv420p'
@@ -17,6 +24,13 @@ export interface ExportProfile {
   description: string
   encoder: ExportEncoderSettings
 }
+
+export const VIDEO_ENCODERS: ExportVideoEncoderOption[] = [
+  { codec: 'libx264',    label: 'Software x264',      description: 'CPU encoding, most compatible' },
+  { codec: 'h264_nvenc', label: 'NVIDIA NVENC',       description: 'Hardware H.264 on NVIDIA GPUs' },
+  { codec: 'h264_qsv',   label: 'Intel Quick Sync',   description: 'Hardware H.264 on Intel GPUs' },
+  { codec: 'h264_amf',   label: 'AMD AMF',            description: 'Hardware H.264 on AMD GPUs' },
+]
 
 export const EXPORT_PROFILES: ExportProfile[] = [
   {
@@ -70,4 +84,18 @@ export const DEFAULT_EXPORT_PROFILE = EXPORT_PROFILES[1]
 
 export function getExportProfile(id: string): ExportProfile {
   return EXPORT_PROFILES.find((profile) => profile.id === id) ?? DEFAULT_EXPORT_PROFILE
+}
+
+export function getVideoEncoderOption(codec: ExportVideoCodec): ExportVideoEncoderOption {
+  return VIDEO_ENCODERS.find((encoder) => encoder.codec === codec) ?? VIDEO_ENCODERS[0]
+}
+
+export function withVideoCodec(profile: ExportProfile, videoCodec: ExportVideoCodec): ExportProfile {
+  return {
+    ...profile,
+    encoder: {
+      ...profile.encoder,
+      videoCodec,
+    },
+  }
 }

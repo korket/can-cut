@@ -1,9 +1,12 @@
 import {
+  createRenderPlanFingerprint,
   getRenderPlanAssets,
   getRenderPlanTimelineItems,
   type RenderPlan,
 } from '../editor-core/renderPlan'
 import { DEFAULT_EXPORT_PROFILE, type ExportEncoderSettings } from '../editor-core/exportSettings'
+import { createRenderCacheDescriptor, createRenderCacheKey } from './renderCache'
+import type { ExportRenderer, ExportTraceMetrics } from './renderEngine'
 import { renderCanvasFrame } from './canvasFrameRenderer'
 import {
   createFrameExportOptions,
@@ -17,11 +20,13 @@ export interface CanvasExportResult {
   path?: string
   error?: string
   canceled?: boolean
+  trace?: ExportTraceMetrics
 }
 
 export interface CanvasExportControls {
   isCanceled?: () => boolean
   outputPath?: string
+  cacheKey?: string
 }
 
 function createCanvas(width: number, height: number, willReadFrequently: boolean) {
@@ -70,6 +75,7 @@ export async function renderPlanToCanvasExport(
   controls: CanvasExportControls = {},
   encoder: ExportEncoderSettings = DEFAULT_EXPORT_PROFILE.encoder
 ): Promise<CanvasExportResult> {
+  const totalStart = performance.now()
   const width = plan.resolution.width
   const height = plan.resolution.height
   const fps = plan.fps
@@ -79,7 +85,15 @@ export async function renderPlanToCanvasExport(
   const textOverlays = plan.textLayers
   const frameMs = 1000 / fps
   const frameCount = Math.ceil(totalMs / 1000 * fps)
+  const trace: ExportTraceMetrics = {
+    planHash: createRenderPlanFingerprint(plan),
+    cacheKey: controls.cacheKey,
+    frameCount,
+    frameBytes: 0,
+  }
+  const mediaLoadStart = performance.now()
   const media = await loadCanvasMedia(timelineItems, clips)
+  trace.mediaLoadMs = performance.now() - mediaLoadStart
   const { canvas, ctx } = createCanvas(width, height, encoder.framePipeFormat === 'raw-rgba')
   let session: FrameExportSession | null = null
   let lastProgress = -1
@@ -92,12 +106,20 @@ export async function renderPlanToCanvasExport(
   }
 
   try {
+    const encoderStart = performance.now()
     const startResult = await startFrameExportSession(
       jobId,
       createFrameExportOptions(width, height, fps, totalMs, clips, timelineItems, encoder, controls.outputPath)
     )
-    if ('canceled' in startResult) return { canceled: true }
-    if ('error' in startResult) return { error: startResult.error }
+    trace.encoderStartMs = performance.now() - encoderStart
+    if ('canceled' in startResult) {
+      trace.totalMs = performance.now() - totalStart
+      return { canceled: true, trace }
+    }
+    if ('error' in startResult) {
+      trace.totalMs = performance.now() - totalStart
+      return { error: startResult.error, trace }
+    }
 
     session = startResult.session
 
@@ -105,9 +127,11 @@ export async function renderPlanToCanvasExport(
       if (controls.isCanceled?.()) {
         await session.abort()
         session = null
-        return { canceled: true }
+        trace.totalMs = performance.now() - totalStart
+        return { canceled: true, trace }
       }
 
+      const renderStart = performance.now()
       await renderCanvasFrame(
         ctx,
         width,
@@ -118,27 +142,50 @@ export async function renderPlanToCanvasExport(
         textOverlays,
         media
       )
+      trace.frameRenderMs = (trace.frameRenderMs ?? 0) + (performance.now() - renderStart)
 
-      await session.sendFrame(await encodeCanvasFrame(canvas, ctx, width, height, encoder))
+      const readbackStart = performance.now()
+      const encodedFrame = await encodeCanvasFrame(canvas, ctx, width, height, encoder)
+      trace.frameReadbackMs = (trace.frameReadbackMs ?? 0) + (performance.now() - readbackStart)
+      trace.frameBytes = (trace.frameBytes ?? 0) + encodedFrame.byteLength
+
+      const transferStart = performance.now()
+      await session.sendFrame(encodedFrame)
+      trace.frameTransferMs = (trace.frameTransferMs ?? 0) + (performance.now() - transferStart)
       reportProgress((frame + 1) / frameCount * 85)
     }
 
     if (controls.isCanceled?.()) {
       await session.abort()
       session = null
-      return { canceled: true }
+      trace.totalMs = performance.now() - totalStart
+      return { canceled: true, trace }
     }
 
     reportProgress(90)
+    const finalizeStart = performance.now()
     const result = await session.finish()
+    trace.encoderFinalizeMs = performance.now() - finalizeStart
+    trace.totalMs = performance.now() - totalStart
     session = null
     reportProgress(100)
-    return result
+    return { ...result, trace }
   } catch (err: unknown) {
     await session?.abort()
-    if (controls.isCanceled?.()) return { canceled: true }
-    return { error: String(err) }
+    trace.totalMs = performance.now() - totalStart
+    if (controls.isCanceled?.()) return { canceled: true, trace }
+    return { error: String(err), trace }
   } finally {
     disposeCanvasMedia(media)
   }
+}
+
+export const canvasExportRenderer: ExportRenderer = {
+  id: 'renderer-canvas',
+  label: 'Canvas frame renderer',
+  export(jobId, plan, profile, onProgress, controls) {
+    const cacheDescriptor = createRenderCacheDescriptor(plan, profile, 'renderer-canvas')
+    const cacheKey = createRenderCacheKey(cacheDescriptor)
+    return renderPlanToCanvasExport(jobId, plan, onProgress, { ...controls, cacheKey }, profile.encoder)
+  },
 }

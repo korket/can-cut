@@ -1,4 +1,5 @@
 import { ffmpeg, hasAudioStream } from './ffmpegRuntime'
+import { describeVideoEncoder, getFluentVideoEncoderOptions } from './encoderOptions'
 import type { ClipExportInfo, ExportEffects, ExportEngineHost, ExportOptions, ExportTransform } from './types'
 
 type ClipInfo = ClipExportInfo & { origIdx: number; hasAudio: boolean }
@@ -17,6 +18,8 @@ function buildClipFilter(
   SH: number,
   W: number,
   H: number,
+  extraFilters: string[] = [],
+  forceAlpha = false,
 ): { filter: string; overlayX: number; overlayY: number; hasOpacity: boolean } {
   const cSW = SW > 0 ? SW : W
   const cSH = SH > 0 ? SH : H
@@ -73,11 +76,13 @@ function buildClipFilter(
 
   const hasOpacity = ef.opacity < 100
   if (hasOpacity) filters.push(`format=rgba,colorchannelmixer=aa=${(ef.opacity / 100).toFixed(4)}`)
+  if (forceAlpha && !hasOpacity) filters.push('format=rgba')
+  filters.push(...extraFilters)
 
   const overlayX = Math.round(tr.anchorX * W * (1 - asx) + (tr.cropL / 100) * W * asx + (tr.posX / 100) * W)
   const overlayY = Math.round(tr.anchorY * H * (1 - asy) + (tr.cropT / 100) * H * asy + (tr.posY / 100) * H)
 
-  return { filter: `${inputRef}${filters.join(',')}[${outputLabel}]`, overlayX, overlayY, hasOpacity }
+  return { filter: `${inputRef}${filters.join(',')}[${outputLabel}]`, overlayX, overlayY, hasOpacity: hasOpacity || forceAlpha }
 }
 
 function progressFromTimemark(timemark: string | undefined, percent: number | undefined, totalSec: string): number {
@@ -93,6 +98,119 @@ function progressFromTimemark(timemark: string | undefined, percent: number | un
 
 function isNoisyFfmpegProgressLine(line: string): boolean {
   return /^frame=\s*\d+/i.test(line) || /^size=\s*\S+\s+time=/i.test(line)
+}
+
+function escapeDrawtextText(text: string): string {
+  return text
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/:/g, '\\:')
+    .replace(/%/g, '\\%')
+    .replace(/\r?\n/g, '\\n')
+}
+
+function ffmpegColor(color: string): string {
+  return /^#[0-9a-f]{6}$/i.test(color) ? `0x${color.slice(1)}` : color
+}
+
+function getDrawtextFontOption(fontFamily: string): string | null {
+  const family = fontFamily.trim()
+  if (!family || family === 'sans-serif') return null
+  return `font='${escapeDrawtextText(family)}'`
+}
+
+function smoothstepExpr(valueExpr: string): string {
+  return `(${valueExpr})*(${valueExpr})*(3-2*(${valueExpr}))`
+}
+
+function getDrawtextAlphaExpression(overlay: ExportOptions['textOverlays'][number]): string | null {
+  const animation = overlay.animation
+  if (!animation) return null
+
+  const expressions: string[] = []
+  const start = (overlay.startTime / 1000).toFixed(6)
+  const end = (overlay.endTime / 1000).toFixed(6)
+
+  if (animation.inEffect === 'fade' && animation.inDuration > 0) {
+    const inDuration = (animation.inDuration / 1000).toFixed(6)
+    const inEnd = ((overlay.startTime + animation.inDuration) / 1000).toFixed(6)
+    const progress = `(t-${start})/${inDuration}`
+    expressions.push(`if(lt(t,${inEnd}),${smoothstepExpr(progress)},1)`)
+  }
+
+  if (animation.outEffect === 'fade' && animation.outDuration > 0) {
+    const outDuration = (animation.outDuration / 1000).toFixed(6)
+    const outStart = ((overlay.endTime - animation.outDuration) / 1000).toFixed(6)
+    const progress = `(${end}-t)/${outDuration}`
+    expressions.push(`if(gt(t,${outStart}),${smoothstepExpr(progress)},1)`)
+  }
+
+  return expressions.length > 0 ? expressions.join('*') : null
+}
+
+function getClipDuration(clip: ClipInfo): number {
+  return clip.trimEnd - clip.trimStart
+}
+
+function getClipEnd(clip: ClipInfo): number {
+  return clip.startTime + getClipDuration(clip)
+}
+
+function findOutgoingTransitionClip(clips: ClipInfo[], incoming: ClipInfo): ClipInfo | null {
+  return clips.find((candidate) =>
+    candidate.origIdx !== incoming.origIdx &&
+    candidate.trackIndex === incoming.trackIndex &&
+    candidate.type !== 'audio' &&
+    Math.abs(getClipEnd(candidate) - incoming.startTime) < 500
+  ) ?? null
+}
+
+function getClipAnimationAlphaFilters(clip: ClipInfo): string[] {
+  const animation = clip.animation
+  if (!animation) return []
+
+  const filters: string[] = []
+  const start = (clip.startTime / 1000).toFixed(6)
+  const endMs = clip.startTime + getClipDuration(clip)
+
+  if (animation.inEffect === 'fade' && animation.inDuration > 0) {
+    filters.push(`fade=t=in:st=${start}:d=${(animation.inDuration / 1000).toFixed(6)}:alpha=1`)
+  }
+
+  if (animation.outEffect === 'fade' && animation.outDuration > 0) {
+    const outStart = Math.max(clip.startTime, endMs - animation.outDuration)
+    filters.push(`fade=t=out:st=${(outStart / 1000).toFixed(6)}:d=${(animation.outDuration / 1000).toFixed(6)}:alpha=1`)
+  }
+
+  return filters
+}
+
+function isNativeTransition(clip: ClipInfo): boolean {
+  return (
+    clip.transitionIn?.type === 'crossfade' ||
+    clip.transitionIn?.type === 'fade-color' ||
+    clip.transitionIn?.type === 'wipe-left' ||
+    clip.transitionIn?.type === 'wipe-right' ||
+    clip.transitionIn?.type === 'wipe-up' ||
+    clip.transitionIn?.type === 'wipe-down'
+  ) && clip.transitionIn.duration > 0
+}
+
+function getWipeAlphaFilter(type: NonNullable<ClipInfo['transitionIn']>['type'], startSec: string, durationSec: string): string | null {
+  const progress = `((T-${startSec})/${durationSec})`
+  const visible = type === 'wipe-left'
+    ? `lte(X,W*${progress})`
+    : type === 'wipe-right'
+      ? `gte(X,W*(1-${progress}))`
+      : type === 'wipe-up'
+        ? `lte(Y,H*${progress})`
+        : type === 'wipe-down'
+          ? `gte(Y,H*(1-${progress}))`
+          : null
+
+  return visible
+    ? `geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(${visible},alpha(X,Y),0)'`
+    : null
 }
 
 async function exportNativeVideo(
@@ -111,7 +229,7 @@ async function exportNativeVideo(
   const [W, H] = resolution.split('x').map(Number)
   const totalSec = (totalMs / 1000).toFixed(3)
 
-  host.emitLog(jobId, `Preparing native export: ${resolution} @ ${fps} fps, ${encoder.x264Preset}, CRF ${encoder.crf}`)
+  host.emitLog(jobId, `Preparing native export: ${resolution} @ ${fps} fps, ${describeVideoEncoder(encoder)}`)
 
   const clipsInfo: ClipInfo[] = await Promise.all(
     clips.map(async (clip, origIdx) => {
@@ -162,6 +280,13 @@ async function exportNativeVideo(
       const es = ((clip.startTime + clip.trimEnd - clip.trimStart) / 1000).toFixed(6)
       const ts = (clip.trimStart / 1000).toFixed(6)
       const dur = ((clip.trimEnd - clip.trimStart) / 1000).toFixed(6)
+      const transition = isNativeTransition(clip)
+        ? clip.transitionIn
+        : null
+      const transitionDur = transition ? (transition.duration / 1000).toFixed(6) : '0'
+      const transitionHalfDur = transition ? (transition.duration / 2000).toFixed(6) : '0'
+      const transitionMid = transition ? ((clip.startTime + transition.duration / 2) / 1000).toFixed(6) : ss
+      const transitionEnd = transition ? ((clip.startTime + transition.duration) / 1000).toFixed(6) : ss
       const vLbl = `vc${vi}`
       const isLast = vi === videoClips.length - 1
       const outLbl = isLast && textOverlays.length === 0 ? 'vout' : `vb${vi}`
@@ -169,9 +294,79 @@ async function exportNativeVideo(
       let overlayX = 0
       let overlayY = 0
       let hasOpacity = false
+      const clipExtraFilters = getClipAnimationAlphaFilters(clip)
+      let clipForceAlpha = clipExtraFilters.length > 0
+
+      if (transition) {
+        const outgoing = findOutgoingTransitionClip(videoClips, clip)
+        if (outgoing) {
+          const frozenLbl = `vtxo${vi}`
+          const transitionBaseLbl = `vtxb${vi}`
+          let frozenOverlayX = 0
+          let frozenOverlayY = 0
+          let frozenHasOpacity = false
+          const isWipe = transition.type === 'wipe-left' || transition.type === 'wipe-right' || transition.type === 'wipe-up' || transition.type === 'wipe-down'
+          const fadeOut = isWipe
+            ? null
+            : transition.type === 'fade-color'
+            ? `fade=t=out:st=${ss}:d=${transitionHalfDur}:alpha=1`
+            : `fade=t=out:st=${ss}:d=${transitionDur}:alpha=1`
+
+          if (outgoing.type === 'solid') {
+            const alphaPart = fadeOut ? `,format=rgba,${fadeOut}` : ''
+            parts.push(`color=c=${outgoing.color ?? '#000000'}:s=${W}x${H}:r=${fps}:d=${transitionDur},setpts=PTS-STARTPTS+${ss}/TB${alphaPart}[${frozenLbl}]`)
+            frozenHasOpacity = Boolean(fadeOut)
+          } else {
+            const outgoingInput = inputOf.get(outgoing.origIdx)!
+            const source = outgoing.type === 'image'
+              ? `[${outgoingInput}:v]trim=duration=${transitionDur},setpts=PTS-STARTPTS+${ss}/TB,`
+              : (() => {
+                  const frameSec = 1 / fps
+                  const lastFrameStart = Math.max(outgoing.trimStart, outgoing.trimEnd - frameSec * 1000) / 1000
+                  return `[${outgoingInput}:v]trim=start=${lastFrameStart.toFixed(6)}:duration=${frameSec.toFixed(6)},setpts=PTS-STARTPTS+${ss}/TB,tpad=stop_mode=clone:stop_duration=${transitionDur},`
+                })()
+            const frozen = buildClipFilter(
+              source,
+              frozenLbl,
+              outgoing.transform,
+              outgoing.effects,
+              outgoing.clipWidth,
+              outgoing.clipHeight,
+              W,
+              H,
+              fadeOut ? [fadeOut] : [],
+              Boolean(fadeOut),
+            )
+            parts.push(frozen.filter)
+            frozenOverlayX = frozen.overlayX
+            frozenOverlayY = frozen.overlayY
+            frozenHasOpacity = frozen.hasOpacity
+          }
+
+          const frozenFmt = frozenHasOpacity ? ':format=auto' : ''
+          parts.push(`[${baseLabel}][${frozenLbl}]overlay=x=${frozenOverlayX}:y=${frozenOverlayY}:enable='between(t,${ss},${transitionEnd})':eof_action=pass${frozenFmt}[${transitionBaseLbl}]`)
+          baseLabel = transitionBaseLbl
+
+          if (transition.type === 'fade-color') {
+            const colorLbl = `vtxc${vi}`
+            const colorBaseLbl = `vtxcb${vi}`
+            parts.push(`color=c=${transition.color}:s=${W}x${H}:r=${fps}:d=${transitionDur},setpts=PTS-STARTPTS+${ss}/TB,format=rgba,fade=t=in:st=${ss}:d=${transitionHalfDur}:alpha=1,fade=t=out:st=${transitionMid}:d=${transitionHalfDur}:alpha=1[${colorLbl}]`)
+            parts.push(`[${baseLabel}][${colorLbl}]overlay=x=0:y=0:enable='between(t,${ss},${transitionEnd})':eof_action=pass:format=auto[${colorBaseLbl}]`)
+            baseLabel = colorBaseLbl
+            clipExtraFilters.push(`fade=t=in:st=${transitionMid}:d=${transitionHalfDur}:alpha=1`)
+          } else {
+            const wipeAlphaFilter = getWipeAlphaFilter(transition.type, ss, transitionDur)
+            if (wipeAlphaFilter) clipExtraFilters.push(wipeAlphaFilter)
+            else clipExtraFilters.push(`fade=t=in:st=${ss}:d=${transitionDur}:alpha=1`)
+          }
+          clipForceAlpha = true
+        }
+      }
 
       if (clip.type === 'solid') {
-        parts.push(`color=c=${clip.color ?? '#000000'}:s=${W}x${H}:r=${fps}:d=${dur},setpts=PTS-STARTPTS+${ss}/TB[${vLbl}]`)
+        const fadeIn = clipExtraFilters.length > 0 ? `,format=rgba,${clipExtraFilters.join(',')}` : ''
+        parts.push(`color=c=${clip.color ?? '#000000'}:s=${W}x${H}:r=${fps}:d=${dur},setpts=PTS-STARTPTS+${ss}/TB${fadeIn}[${vLbl}]`)
+        hasOpacity = clipForceAlpha
       } else {
         const i = inputOf.get(clip.origIdx)!
         const src = clip.type === 'image'
@@ -187,6 +382,8 @@ async function exportNativeVideo(
           clip.clipHeight,
           W,
           H,
+          clipExtraFilters,
+          clipForceAlpha,
         )
         parts.push(filter)
         overlayX = ox
@@ -209,10 +406,25 @@ async function exportNativeVideo(
       const overlay = textOverlays[t]
       const ss = (overlay.startTime / 1000).toFixed(3)
       const es = (overlay.endTime / 1000).toFixed(3)
-      const txt = overlay.text.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/:/g, '\\:')
+      const txt = escapeDrawtextText(overlay.text)
       const isLast = t === textOverlays.length - 1
       const outLbl = isLast ? 'vout' : `vtxt${t}`
-      parts.push(`[${baseLabel}]drawtext=text='${txt}':fontcolor=${overlay.color}:fontsize=${overlay.fontSize}:x=${overlay.x}:y=${overlay.y}:enable='between(t,${ss},${es})'[${outLbl}]`)
+      const fontOption = getDrawtextFontOption(overlay.fontFamily)
+      const alphaExpression = getDrawtextAlphaExpression(overlay)
+      const textOptions = [
+        `text='${txt}'`,
+        fontOption,
+        `fontcolor=${ffmpegColor(overlay.color)}`,
+        `fontsize=${overlay.fontSize}`,
+        alphaExpression ? `alpha='${alphaExpression}'` : null,
+        `x=${overlay.x}`,
+        `y=${overlay.y}`,
+        'shadowcolor=black@0.8',
+        'shadowx=0',
+        'shadowy=1',
+        `enable='between(t,${ss},${es})'`,
+      ].filter(Boolean).join(':')
+      parts.push(`[${baseLabel}]drawtext=${textOptions}[${outLbl}]`)
       baseLabel = outLbl
     }
 
@@ -242,7 +454,7 @@ async function exportNativeVideo(
       .complexFilter(parts.join(';'))
       .map('[vout]')
       .videoCodec(encoder.videoCodec)
-      .outputOptions(['-y', `-crf ${encoder.crf}`, `-r ${fps}`, `-preset ${encoder.x264Preset}`, `-pix_fmt ${encoder.pixelFormat}`, '-threads 0'])
+      .outputOptions(['-y', `-r ${fps}`, ...getFluentVideoEncoderOptions(encoder)])
 
     if (audioLabels.length > 0) {
       cmd.map('[aout]').audioCodec(encoder.audioCodec).audioBitrate(encoder.audioBitrate)
