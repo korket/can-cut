@@ -2,7 +2,7 @@ import type { ExportProfile } from '../editor-core/exportSettings'
 import { createRenderPlanFingerprint, type RenderPlan } from '../editor-core/renderPlan'
 
 export interface RenderCacheDescriptor {
-  version: 1
+  version: 2
   rendererId: string
   planHash: string
   profileId: string
@@ -19,7 +19,7 @@ export function createRenderCacheDescriptor(
   rendererId: string,
 ): RenderCacheDescriptor {
   return {
-    version: 1,
+    version: 2,
     rendererId,
     planHash: createRenderPlanFingerprint(plan),
     profileId: profile.id,

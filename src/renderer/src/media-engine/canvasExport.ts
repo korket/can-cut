@@ -140,7 +140,8 @@ export async function renderPlanToCanvasExport(
         timelineItems,
         clips,
         textOverlays,
-        media
+        media,
+        { seekTimeoutMs: 5000, strictSeek: true }
       )
       trace.frameRenderMs = (trace.frameRenderMs ?? 0) + (performance.now() - renderStart)
 

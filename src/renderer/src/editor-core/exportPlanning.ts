@@ -126,15 +126,17 @@ function animationIsDefault(layer: { animation?: unknown }) {
 
 function getNativeClipAnimationIneligibility(layer: { animation?: Animation }, durationMs: number): string | null {
   const animation = { ...DEFAULT_ANIMATION, ...layer.animation }
-  const hasFadeIn = animation.inEffect === 'fade'
-  const hasFadeOut = animation.outEffect === 'fade'
+  const hasAnimation = animation.inEffect !== 'none' || animation.outEffect !== 'none'
+  if (!hasAnimation) return null
 
-  if (animation.inEffect !== 'none' && !hasFadeIn) return 'clip animation requires renderer export'
-  if (animation.outEffect !== 'none' && !hasFadeOut) return 'clip animation requires renderer export'
-  if (hasFadeIn && (animation.inDuration <= 0 || animation.inDuration > durationMs)) return 'clip fade duration requires renderer export'
-  if (hasFadeOut && (animation.outDuration <= 0 || animation.outDuration > durationMs)) return 'clip fade duration requires renderer export'
+  if (animation.inEffect !== 'none' && (animation.inDuration <= 0 || animation.inDuration > durationMs)) {
+    return 'clip animation duration requires renderer export'
+  }
+  if (animation.outEffect !== 'none' && (animation.outDuration <= 0 || animation.outDuration > durationMs)) {
+    return 'clip animation duration requires renderer export'
+  }
 
-  return null
+  return 'clip animation requires renderer export'
 }
 
 function getNativeTextIneligibility(layer: TextOverlay): string | null {
@@ -165,38 +167,11 @@ function getItemDuration(layer: { trimStart: number; trimEnd: number }): number 
   return layer.trimEnd - layer.trimStart
 }
 
-function getItemEnd(layer: { startTime: number; trimStart: number; trimEnd: number }): number {
-  return layer.startTime + getItemDuration(layer)
-}
-
-function hasAdjacentOutgoingLayer(layer: NativeTransitionLayer, layers: NativeTransitionLayer[]): boolean {
-  return layers.some((candidate) =>
-    candidate.id !== layer.id &&
-    candidate.trackIndex === layer.trackIndex &&
-    Math.abs(getItemEnd(candidate) - layer.startTime) < 500
-  )
-}
-
-function getNativeTransitionIneligibility(layer: NativeTransitionLayer, layers: NativeTransitionLayer[]): string | null {
+function getNativeTransitionIneligibility(layer: NativeTransitionLayer): string | null {
   const transition = layer.transitionIn
   if (!transition || transition.type === 'cut') return null
 
-  if (
-    transition.type !== 'crossfade' &&
-    transition.type !== 'fade-color' &&
-    transition.type !== 'wipe-left' &&
-    transition.type !== 'wipe-right' &&
-    transition.type !== 'wipe-up' &&
-    transition.type !== 'wipe-down'
-  ) return 'this transition requires renderer export'
-  if (transition.duration <= 0 || transition.duration > getItemDuration(layer)) {
-    return 'transition duration requires renderer export'
-  }
-  if (!hasAdjacentOutgoingLayer(layer, layers)) {
-    return 'transition without adjacent outgoing clip requires renderer export'
-  }
-
-  return null
+  return 'transitions require renderer export for frame-accurate timing'
 }
 
 export function getNativeExportEligibility(plan: RenderPlan): NativeExportEligibility {
@@ -206,7 +181,7 @@ export function getNativeExportEligibility(plan: RenderPlan): NativeExportEligib
   }
 
   for (const layer of plan.videoLayers) {
-    const transitionReason = getNativeTransitionIneligibility(layer, plan.videoLayers)
+    const transitionReason = getNativeTransitionIneligibility(layer)
     if (transitionReason) return { ok: false, reason: transitionReason }
 
     if (layer.kenBurns) {
