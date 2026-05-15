@@ -86,6 +86,7 @@ interface FrameExportOptions {
   totalMs: number
   encoder: ExportEncoderSettings
   outputPath?: string
+  includeAudio?: boolean
   clips: Array<{
     id: string
     path: string
@@ -151,6 +152,7 @@ interface RendererExportJobPayload {
   outputPath: string
   plan: any
   cacheKey?: string
+  includeAudio?: boolean
   profile: {
     id: string
     label: string
@@ -164,6 +166,7 @@ interface Window {
     openFiles: () => Promise<string[]>
     getVideoInfo: (path: string) => Promise<any>
     listVideoEncoders: () => Promise<string[]>
+    listUsableVideoEncoders: () => Promise<string[]>
     getThumbnail: (path: string, timeMs: number) => Promise<string>
     validateMediaPaths: (paths: string[]) => Promise<MediaPathValidationResult[]>
     resolveMediaImportPaths: (paths: string[]) => Promise<MediaImportEntry[]>

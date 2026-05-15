@@ -42,6 +42,7 @@ function isFrameBuffer(value: unknown): value is ArrayBuffer {
 export function registerExportIpc(ipcMain: IpcMain, host: ExportIpcHost): void {
   ipcMain.handle('ffprobe:getInfo', (_event, filePath: string) => host.engine.ffprobe(filePath))
   ipcMain.handle('ffmpeg:listVideoEncoders', () => host.engine.listVideoEncoders())
+  ipcMain.handle('ffmpeg:listUsableVideoEncoders', () => host.engine.listUsableVideoEncoders())
   ipcMain.handle('ffmpeg:thumbnail', (_event, filePath: string, timeMs: number) => host.engine.createThumbnail(filePath, timeMs))
   ipcMain.handle('media:validatePaths', async (_event, paths: string[]) => {
     const uniquePaths = [...new Set((Array.isArray(paths) ? paths : []).filter(Boolean))]

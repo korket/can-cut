@@ -108,7 +108,9 @@ export function createFrameExportController(host: ExportEngineHost) {
       if (!outPath) return { canceled: true }
       if (!ffmpegPath) return { error: 'ffmpeg binary is not available' }
 
-      const audioSources = await getFrameAudioSources(options.clips, options.timelineItems)
+      const audioSources = options.includeAudio === false
+        ? []
+        : await getFrameAudioSources(options.clips, options.timelineItems)
       const args = buildFrameExportArgs(options, audioSources, outPath)
       const stderrBuf: string[] = []
       const proc = spawn(ffmpegPath, args)

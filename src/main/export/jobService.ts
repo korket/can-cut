@@ -1,7 +1,11 @@
+import { spawn, type ChildProcess } from 'child_process'
 import { createHash, randomUUID } from 'crypto'
 import { constants, promises as fs } from 'fs'
 import { dirname, join } from 'path'
+import { tmpdir } from 'os'
 import type { createExportEngine } from '../exportEngine'
+import { appendVideoEncoderArgs } from './encoderOptions'
+import { ffmpegPath, hasAudioStream } from './ffmpegRuntime'
 import {
   isExportJobSnapshot,
   type ExportJob,
@@ -14,11 +18,27 @@ import {
   type ExportTraceMetrics,
   type ExportValidationIssue,
   type ExportValidationReport,
+  type HybridExportSegmentRequest,
   type RenderBackend,
   type RendererExportJobRequest,
+  type SegmentRenderBackend,
 } from './contracts'
 
 type ExportEngine = ReturnType<typeof createExportEngine>
+type ExportEncoderSettings = ExportJobStartRequest['profile']['encoder']
+
+interface ProgressScale {
+  base: number
+  span: number
+}
+
+interface HybridAudioSource {
+  path: string
+  startTime: number
+  trimStart: number
+  trimEnd: number
+  volume: number
+}
 
 interface ManagedExportJob {
   job: ExportJob
@@ -46,6 +66,7 @@ const MAX_PERSISTED_LOGS = 120
 const INTERRUPTED_EXPORT_MESSAGE = 'Export was interrupted before it finished.'
 
 function exportBackendMode(backend: RenderBackend): ExportJobMode {
+  if (backend === 'hybrid') return 'hybrid'
   return backend === 'ffmpeg-native' ? 'native' : 'renderer'
 }
 
@@ -86,6 +107,86 @@ function formatTraceSummary(trace: ExportTraceMetrics): string {
 
 function hashCacheKey(cacheKey: string): string {
   return createHash('sha256').update(cacheKey).digest('hex')
+}
+
+function isHardwareVideoEncoder(encoder: ExportEncoderSettings): boolean {
+  return encoder.videoCodec !== 'libx264'
+}
+
+function withSoftwareVideoEncoder(encoder: ExportEncoderSettings): ExportEncoderSettings {
+  return {
+    ...encoder,
+    videoCodec: 'libx264',
+  }
+}
+
+function createSoftwareEncoderFallbackRequest(request: ExportJobStartRequest): ExportJobStartRequest {
+  const encoder = withSoftwareVideoEncoder(request.profile.encoder)
+
+  return {
+    ...request,
+    profile: {
+      ...request.profile,
+      encoder,
+    },
+    nativeOptions: {
+      ...request.nativeOptions,
+      encoder,
+      outputPath: request.outputPath ?? request.nativeOptions.outputPath,
+    },
+    cacheKey: undefined,
+    hybridPlan: request.hybridPlan
+      ? {
+        segments: request.hybridPlan.segments.map((segment) => ({
+          ...segment,
+          cacheKey: undefined,
+          nativeOptions: {
+            ...segment.nativeOptions,
+            encoder,
+          },
+        })),
+      }
+      : undefined,
+  }
+}
+
+function trimLogChunk(chunk: string): string[] {
+  return chunk
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+}
+
+function isNoisyFfmpegProgressLine(line: string): boolean {
+  return /^frame=\s*\d+/i.test(line) || /^size=\s*\S+\s+time=/i.test(line)
+}
+
+function runFfmpeg(args: string[], onLog: (message: string) => void, registerProcess?: (proc: ChildProcess) => void): Promise<void> {
+  if (!ffmpegPath) return Promise.reject(new Error('ffmpeg binary is not available'))
+
+  return new Promise((resolve, reject) => {
+    const stderrBuf: string[] = []
+    const proc = spawn(ffmpegPath, args, { windowsHide: true })
+    registerProcess?.(proc)
+
+    proc.stderr?.on('data', (data: Buffer) => {
+      const text = data.toString()
+      stderrBuf.push(text)
+      for (const line of trimLogChunk(text)) {
+        if (!isNoisyFfmpegProgressLine(line)) onLog(line)
+      }
+    })
+
+    proc.on('error', (error) => reject(error))
+    proc.on('close', (code) => {
+      if (code === 0 || code === null) {
+        resolve()
+        return
+      }
+
+      reject(new Error(`ffmpeg exited with code ${code}: ${stderrBuf.join('').slice(-2000)}`))
+    })
+  })
 }
 
 async function copyFileAtomic(sourcePath: string, targetPath: string): Promise<void> {
@@ -169,6 +270,8 @@ export class ExportJobService {
   private queue: string[] = []
   private activeJobId: string | null = null
   private rendererWaiters = new Map<string, RendererExportWaiter>()
+  private progressScales = new Map<string, ProgressScale>()
+  private hybridConcatProcesses = new Map<string, ChildProcess>()
   private persistPromise: Promise<void> = Promise.resolve()
 
   constructor(private readonly host: ExportJobServiceHost) {}
@@ -257,6 +360,7 @@ export class ExportJobService {
     entry.job.updatedAt = nowMs()
     this.addLog(entry, 'Cancel requested')
     this.host.engine.cancelExport(jobId)
+    this.hybridConcatProcesses.get(jobId)?.kill('SIGTERM')
     this.host.sendToExportRenderer('export:rendererCancel', { jobId })
     this.notify()
     return toSnapshot(entry)
@@ -271,7 +375,7 @@ export class ExportJobService {
   }
 
   handleEngineProgress(jobId: string, pct: number): void {
-    this.updateProgress(jobId, pct)
+    this.updateProgress(jobId, this.scaleProgress(jobId, pct))
   }
 
   handleEngineLog(jobId: string, message: string): void {
@@ -282,7 +386,7 @@ export class ExportJobService {
   }
 
   handleRendererProgress(jobId: string, pct: number): void {
-    this.updateProgress(jobId, pct)
+    this.updateProgress(jobId, this.scaleProgress(jobId, pct))
   }
 
   handleRendererComplete(jobId: string, result: ExportJobResult): void {
@@ -349,11 +453,26 @@ export class ExportJobService {
       }
 
       const exportStart = nowMs()
-      const cachedResult = await this.tryReuseRenderCache(entry)
-      const result = cachedResult ?? (job.backend === 'ffmpeg-native'
-        ? await this.host.engine.exportVideo(job.id, request.nativeOptions)
-        : await this.runRendererExport(entry))
-      if (!cachedResult && result.success) await this.storeRenderCache(entry, result)
+      let exportRequest = await this.withEncoderAvailabilityFallback(entry, request)
+      let cachedResult: ExportJobResult | null = null
+      let result: ExportJobResult
+
+      if (job.backend === 'hybrid') {
+        result = await this.runHybridExport(entry, exportRequest)
+      } else {
+        cachedResult = exportRequest === request ? await this.tryReuseRenderCache(entry) : null
+        result = cachedResult ?? await this.runExportAttempt(entry, exportRequest, job.backend)
+
+        if (!cachedResult && this.shouldRetryWithSoftwareEncoder(exportRequest, result)) {
+          this.addLog(entry, `Hardware encoder failed: ${result.error ?? 'unknown error'}`)
+          exportRequest = createSoftwareEncoderFallbackRequest(exportRequest)
+          this.addLog(entry, 'Retrying export with Software x264')
+          this.updateProgress(job.id, 0)
+          result = await this.runExportAttempt(entry, exportRequest, job.backend)
+        }
+
+        if (!cachedResult && result.success) await this.storeRenderCache(entry, result)
+      }
 
       job.timing.exportMs = nowMs() - exportStart
       this.settle(entry, result)
@@ -426,10 +545,201 @@ export class ExportJobService {
     }
   }
 
-  private async runRendererExport(entry: ManagedExportJob): Promise<ExportJobResult> {
-    const request = entry.request
-    if (!request) return Promise.resolve({ error: 'Export request is missing.' })
-    if (!entry.job.outputPath) return { error: 'Export output path is missing.' }
+  private createSegmentRequest(
+    request: ExportJobStartRequest,
+    segment: HybridExportSegmentRequest,
+    outputPath: string,
+  ): ExportJobStartRequest {
+    return {
+      ...request,
+      plan: segment.plan,
+      nativeOptions: {
+        ...segment.nativeOptions,
+        encoder: request.profile.encoder,
+        outputPath,
+        includeAudio: false,
+      },
+      outputPath,
+      cacheKey: segment.cacheKey,
+      hybridPlan: undefined,
+    }
+  }
+
+  private async runHybridExport(entry: ManagedExportJob, request: ExportJobStartRequest): Promise<ExportJobResult> {
+    const outputPath = entry.job.outputPath
+    const segments = request.hybridPlan?.segments ?? []
+    if (!outputPath) return { error: 'Export output path is missing.' }
+    if (segments.length === 0) return { error: 'Hybrid export plan is missing segments.' }
+
+    const tempDir = await fs.mkdtemp(join(tmpdir(), `can-cut-${entry.job.id}-`))
+    const segmentPaths: string[] = []
+
+    try {
+      this.addLog(entry, `Hybrid export: ${segments.length} segments`)
+
+      for (const segment of segments) {
+        if (entry.cancelRequested) return { canceled: true }
+
+        const segmentNumber = segment.index + 1
+        const segmentPath = join(tempDir, `segment-${String(segment.index).padStart(4, '0')}.mp4`)
+        const segmentSpan = 90 / segments.length
+        let segmentCacheKey = segment.cacheKey
+        await fs.mkdir(dirname(segmentPath), { recursive: true })
+        this.progressScales.set(entry.job.id, { base: segment.index * segmentSpan, span: segmentSpan })
+        this.addLog(entry, `Hybrid segment ${segmentNumber}/${segments.length}: ${segment.backend}, ${(segment.startMs / 1000).toFixed(2)}s-${(segment.endMs / 1000).toFixed(2)}s${segment.reason ? ` (${segment.reason})` : ''}`)
+
+        let result: ExportJobResult | null = segment.backend === 'renderer-canvas' && segmentCacheKey
+          ? await this.tryReuseRenderCacheFile(entry, segmentCacheKey, segmentPath)
+          : null
+
+        if (!result) {
+          let segmentRequest = this.createSegmentRequest(request, segment, segmentPath)
+          result = await this.runExportAttempt(entry, segmentRequest, segment.backend)
+
+          if (this.shouldRetryWithSoftwareEncoder(segmentRequest, result)) {
+            this.addLog(entry, `Hardware encoder failed for segment ${segmentNumber}: ${result.error ?? 'unknown error'}`)
+            segmentRequest = createSoftwareEncoderFallbackRequest(segmentRequest)
+            segmentCacheKey = undefined
+            this.addLog(entry, `Retrying segment ${segmentNumber} with Software x264`)
+            this.updateProgress(entry.job.id, segment.index * segmentSpan)
+            result = await this.runExportAttempt(entry, segmentRequest, segment.backend)
+          }
+
+          if (result.success && segment.backend === 'renderer-canvas' && segmentCacheKey) {
+            await this.storeRenderCacheFile(entry, segmentCacheKey, segmentPath)
+          }
+        }
+
+        if (result.canceled || entry.cancelRequested) return { canceled: true }
+        if (!result.success) return result
+        segmentPaths.push(result.path ?? segmentPath)
+        this.updateProgress(entry.job.id, (segment.index + 1) * segmentSpan)
+      }
+
+      if (entry.cancelRequested) return { canceled: true }
+      this.progressScales.delete(entry.job.id)
+      this.addLog(entry, 'Concatenating hybrid segments')
+      this.updateProgress(entry.job.id, 92)
+      await this.concatHybridSegments(entry, request, segmentPaths, outputPath)
+      if (entry.cancelRequested) return { canceled: true }
+      this.updateProgress(entry.job.id, 100)
+      return { success: true, path: outputPath }
+    } catch (error: unknown) {
+      if (entry.cancelRequested) return { canceled: true }
+      return { error: String(error) }
+    } finally {
+      this.progressScales.delete(entry.job.id)
+      this.hybridConcatProcesses.delete(entry.job.id)
+      await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {})
+    }
+  }
+
+  private async getHybridAudioSources(request: ExportJobStartRequest): Promise<HybridAudioSource[]> {
+    const audioSources: HybridAudioSource[] = []
+
+    for (const clip of request.nativeOptions.clips) {
+      if (!clip.path) continue
+      if (clip.type === 'audio') {
+        audioSources.push({ path: clip.path, startTime: clip.startTime, trimStart: clip.trimStart, trimEnd: clip.trimEnd, volume: clip.volume })
+      } else if (clip.type === 'video' && await hasAudioStream(clip.path)) {
+        audioSources.push({ path: clip.path, startTime: clip.startTime, trimStart: clip.trimStart, trimEnd: clip.trimEnd, volume: clip.volume })
+      }
+    }
+
+    return audioSources
+  }
+
+  private buildHybridConcatArgs(segmentPaths: string[], request: ExportJobStartRequest, audioSources: HybridAudioSource[], outputPath: string, encoder = request.profile.encoder): string[] {
+    const args = ['-y']
+    const totalSec = (request.preflight.durationMs / 1000).toFixed(3)
+
+    for (const segmentPath of segmentPaths) args.push('-i', segmentPath)
+    for (const source of audioSources) args.push('-i', source.path)
+
+    const parts: string[] = []
+    const videoLabels = segmentPaths.map((_, index) => `[${index}:v:0]`).join('')
+    parts.push(`${videoLabels}concat=n=${segmentPaths.length}:v=1:a=0[vcat]`)
+
+    const audioLabels: string[] = []
+    for (let ai = 0; ai < audioSources.length; ai++) {
+      const source = audioSources[ai]
+      const inputIndex = segmentPaths.length + ai
+      const ts = (source.trimStart / 1000).toFixed(6)
+      const dur = ((source.trimEnd - source.trimStart) / 1000).toFixed(6)
+      const startMs = Math.round(source.startTime)
+      const vol = (source.volume / 100).toFixed(3)
+      const label = `hao${ai}`
+      parts.push(`[${inputIndex}:a]atrim=start=${ts}:duration=${dur},asetpts=PTS-STARTPTS,volume=${vol},adelay=delays=${startMs}ms:all=1,apad=whole_dur=${totalSec}[${label}]`)
+      audioLabels.push(`[${label}]`)
+    }
+
+    if (audioLabels.length > 0) {
+      parts.push(`${audioLabels.join('')}amix=inputs=${audioLabels.length}:normalize=0:duration=longest[haout]`)
+    }
+
+    args.push('-filter_complex', parts.join(';'), '-map', '[vcat]')
+    appendVideoEncoderArgs(args, encoder)
+    args.push('-r', String(request.preflight.fps))
+
+    if (audioLabels.length > 0) {
+      args.push('-map', '[haout]', '-c:a', encoder.audioCodec, '-b:a', encoder.audioBitrate, '-shortest')
+    }
+
+    args.push(outputPath)
+    return args
+  }
+
+  private async concatHybridSegments(entry: ManagedExportJob, request: ExportJobStartRequest, segmentPaths: string[], outputPath: string): Promise<void> {
+    if (segmentPaths.length === 0) throw new Error('Hybrid export produced no segments.')
+
+    const audioSources = await this.getHybridAudioSources(request)
+    const runConcat = (encoder = request.profile.encoder) => runFfmpeg(
+      this.buildHybridConcatArgs(segmentPaths, request, audioSources, outputPath, encoder),
+      (message) => this.addLog(entry, message),
+      (proc) => this.hybridConcatProcesses.set(entry.job.id, proc),
+    )
+
+    try {
+      await runConcat()
+    } catch (error: unknown) {
+      if (!isHardwareVideoEncoder(request.profile.encoder)) throw error
+      this.addLog(entry, `Hardware encoder failed during hybrid concat: ${String(error)}`)
+      this.addLog(entry, 'Retrying hybrid concat with Software x264')
+      await runConcat(withSoftwareVideoEncoder(request.profile.encoder))
+    }
+  }
+
+  private async runExportAttempt(entry: ManagedExportJob, request: ExportJobStartRequest, backend: SegmentRenderBackend): Promise<ExportJobResult> {
+    try {
+      return backend === 'ffmpeg-native'
+        ? await this.host.engine.exportVideo(entry.job.id, request.nativeOptions)
+        : await this.runRendererExport(entry, request)
+    } catch (error: unknown) {
+      return { error: String(error) }
+    }
+  }
+
+  private async withEncoderAvailabilityFallback(entry: ManagedExportJob, request: ExportJobStartRequest): Promise<ExportJobStartRequest> {
+    const encoder = request.profile.encoder
+    if (!isHardwareVideoEncoder(encoder)) return request
+
+    try {
+      const encoders = await this.host.engine.listUsableVideoEncoders()
+      if (encoders.includes(encoder.videoCodec)) return request
+      this.addLog(entry, `${encoder.videoCodec} is not usable on this system; using Software x264`)
+      return createSoftwareEncoderFallbackRequest(request)
+    } catch {
+      return request
+    }
+  }
+
+  private shouldRetryWithSoftwareEncoder(request: ExportJobStartRequest, result: ExportJobResult): boolean {
+    return Boolean(result.error && !result.canceled && isHardwareVideoEncoder(request.profile.encoder))
+  }
+
+  private async runRendererExport(entry: ManagedExportJob, request: ExportJobStartRequest): Promise<ExportJobResult> {
+    const outputPath = request.outputPath ?? entry.job.outputPath
+    if (!outputPath) return { error: 'Export output path is missing.' }
     if (!await this.host.ensureExportRenderer()) {
       return { error: 'Export renderer is not available to run canvas export.' }
     }
@@ -438,10 +748,11 @@ export class ExportJobService {
       this.rendererWaiters.set(entry.job.id, { resolve })
       const sent = this.host.sendToExportRenderer('export:rendererRun', {
         jobId: entry.job.id,
-        outputPath: entry.job.outputPath!,
+        outputPath,
         plan: request.plan,
         profile: request.profile,
         cacheKey: request.cacheKey,
+        includeAudio: request.nativeOptions.includeAudio !== false,
       } satisfies RendererExportJobRequest)
 
       if (!sent) {
@@ -457,6 +768,19 @@ export class ExportJobService {
     const outputPath = entry.job.outputPath
     if (!request || entry.job.backend !== 'renderer-canvas' || !cacheKey || !outputPath) return null
 
+    const result = await this.tryReuseRenderCacheFile(entry, cacheKey, outputPath)
+    if (!result?.success) return result
+
+    return {
+      ...result,
+      trace: {
+        ...result.trace,
+        frameCount: request.preflight.frameCount,
+      },
+    }
+  }
+
+  private async tryReuseRenderCacheFile(entry: ManagedExportJob, cacheKey: string, outputPath: string): Promise<ExportJobResult | null> {
     const cachePath = this.getRenderCachePath(cacheKey)
     const start = nowMs()
 
@@ -471,7 +795,6 @@ export class ExportJobService {
         trace: {
           cacheKey,
           totalMs: nowMs() - start,
-          frameCount: request.preflight.frameCount,
         },
       }
     } catch {
@@ -482,11 +805,15 @@ export class ExportJobService {
 
   private async storeRenderCache(entry: ManagedExportJob, result: ExportJobResult): Promise<void> {
     const request = entry.request
-    const cacheKey = request?.cacheKey ?? result.trace?.cacheKey
+    const cacheKey = result.trace?.cacheKey ?? request?.cacheKey
     if (entry.job.backend !== 'renderer-canvas' || !cacheKey || !result.path) return
 
+    await this.storeRenderCacheFile(entry, cacheKey, result.path)
+  }
+
+  private async storeRenderCacheFile(entry: ManagedExportJob, cacheKey: string, sourcePath: string): Promise<void> {
     try {
-      await copyFileAtomic(result.path, this.getRenderCachePath(cacheKey))
+      await copyFileAtomic(sourcePath, this.getRenderCachePath(cacheKey))
       this.addLog(entry, `Stored render cache: ${cacheKey}`)
     } catch (error: unknown) {
       this.addLog(entry, `Render cache store failed: ${String(error)}`)
@@ -519,6 +846,8 @@ export class ExportJobService {
     job.updatedAt = nowMs()
     this.finishTiming(entry)
     if (this.activeJobId === job.id) this.activeJobId = null
+    this.progressScales.delete(job.id)
+    this.hybridConcatProcesses.delete(job.id)
     this.rendererWaiters.delete(job.id)
     this.notify()
     this.pumpQueue()
@@ -531,6 +860,12 @@ export class ExportJobService {
     if (timing.exportMs && timing.exportMs > 0) {
       timing.effectiveFps = timing.frameCount / (timing.exportMs / 1000)
     }
+  }
+
+  private scaleProgress(jobId: string, pct: number): number {
+    const scale = this.progressScales.get(jobId)
+    if (!scale) return pct
+    return scale.base + (Math.max(0, Math.min(100, pct)) / 100) * scale.span
   }
 
   private updateProgress(jobId: string, pct: number): void {

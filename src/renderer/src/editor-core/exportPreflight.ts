@@ -1,5 +1,6 @@
 import { planExportBackend, type RenderBackend } from './exportPlanning'
 import type { ExportProfile } from './exportSettings'
+import { planHybridExportSegments } from './hybridExportPlanning'
 import type { RenderPlan, RenderResolution } from './renderPlan'
 
 export interface ExportPreflightWarning {
@@ -37,6 +38,10 @@ function createWarnings(plan: RenderPlan, profile: ExportProfile, backend: Rende
     warnings.push({ code: 'canvas-backend', message: backendReason })
   }
 
+  if (backend === 'hybrid') {
+    warnings.push({ code: 'hybrid-backend', message: backendReason ?? 'Hybrid export will render only complex timeline ranges.' })
+  }
+
   if (backend === 'renderer-canvas' && pixelCount > 1920 * 1080) {
     warnings.push({ code: 'high-res-canvas', message: 'High-resolution canvas export may take longer.' })
   }
@@ -57,7 +62,15 @@ function createWarnings(plan: RenderPlan, profile: ExportProfile, backend: Rende
 }
 
 export function buildExportPreflight(plan: RenderPlan, profile: ExportProfile): ExportPreflight {
-  const backendPlan = planExportBackend(plan)
+  const wholeBackendPlan = planExportBackend(plan)
+  const hybridSegments = wholeBackendPlan.backend === 'renderer-canvas'
+    ? planHybridExportSegments(plan)
+    : []
+  const hasNativeSegment = hybridSegments.some((segment) => segment.backend === 'ffmpeg-native')
+  const hasRendererSegment = hybridSegments.some((segment) => segment.backend === 'renderer-canvas')
+  const backendPlan = hasNativeSegment && hasRendererSegment
+    ? { backend: 'hybrid' as const, reason: `${hybridSegments.length} export segments: FFmpeg for simple ranges, renderer for complex ranges.` }
+    : wholeBackendPlan
   const frameCount = Math.max(0, Math.ceil((plan.durationMs / 1000) * plan.fps))
   const pixelCountPerFrame = plan.resolution.width * plan.resolution.height
 

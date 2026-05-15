@@ -1,7 +1,8 @@
 import type { ExportOptions, FrameExportOptions } from './types'
 
-export type RenderBackend = 'ffmpeg-native' | 'renderer-canvas'
-export type ExportJobMode = 'native' | 'renderer'
+export type RenderBackend = 'ffmpeg-native' | 'renderer-canvas' | 'hybrid'
+export type SegmentRenderBackend = Exclude<RenderBackend, 'hybrid'>
+export type ExportJobMode = 'native' | 'renderer' | 'hybrid'
 export type ExportJobStatus = 'queued' | 'running' | 'canceling' | 'completed' | 'failed' | 'canceled' | 'interrupted'
 
 export interface ExportProfileSnapshot {
@@ -114,6 +115,23 @@ export interface ExportJobStartRequest {
   mediaPaths: string[]
   outputPath?: string
   cacheKey?: string
+  hybridPlan?: HybridExportPlanRequest
+}
+
+export interface HybridExportSegmentRequest {
+  index: number
+  backend: SegmentRenderBackend
+  startMs: number
+  endMs: number
+  durationMs: number
+  reason?: string
+  plan: unknown
+  nativeOptions: ExportOptions
+  cacheKey?: string
+}
+
+export interface HybridExportPlanRequest {
+  segments: HybridExportSegmentRequest[]
 }
 
 export interface RendererExportJobRequest {
@@ -122,6 +140,7 @@ export interface RendererExportJobRequest {
   plan: unknown
   profile: ExportProfileSnapshot
   cacheKey?: string
+  includeAudio?: boolean
 }
 
 type GuardResult<T> =
@@ -149,6 +168,10 @@ function isNonNegativeNumber(value: unknown): value is number {
 }
 
 function isRenderBackend(value: unknown): value is RenderBackend {
+  return value === 'ffmpeg-native' || value === 'renderer-canvas' || value === 'hybrid'
+}
+
+function isSegmentRenderBackend(value: unknown): value is SegmentRenderBackend {
   return value === 'ffmpeg-native' || value === 'renderer-canvas'
 }
 
@@ -299,7 +322,8 @@ export function isExportOptions(value: unknown): value is ExportOptions {
     isPositiveNumber(value.fps) &&
     isPositiveNumber(value.duration) &&
     isEncoderSettings(value.encoder) &&
-    (value.outputPath == null || isString(value.outputPath))
+    (value.outputPath == null || isString(value.outputPath)) &&
+    (value.includeAudio == null || typeof value.includeAudio === 'boolean')
   )
 }
 
@@ -336,6 +360,7 @@ export function isFrameExportOptions(value: unknown): value is FrameExportOption
     isPositiveNumber(value.totalMs) &&
     isEncoderSettings(value.encoder) &&
     (value.outputPath == null || isString(value.outputPath)) &&
+    (value.includeAudio == null || typeof value.includeAudio === 'boolean') &&
     Array.isArray(value.clips) &&
     value.clips.every(isFrameClip) &&
     Array.isArray(value.timelineItems) &&
@@ -414,6 +439,27 @@ export function isExportJobResult(value: unknown): value is ExportJobResult {
   )
 }
 
+function isHybridExportSegmentRequest(value: unknown): value is HybridExportSegmentRequest {
+  if (!isObject(value)) return false
+  return (
+    isNonNegativeNumber(value.index) &&
+    isSegmentRenderBackend(value.backend) &&
+    isNonNegativeNumber(value.startMs) &&
+    isPositiveNumber(value.endMs) &&
+    value.endMs > value.startMs &&
+    isPositiveNumber(value.durationMs) &&
+    (value.reason == null || isString(value.reason)) &&
+    Boolean(value.plan) &&
+    isExportOptions(value.nativeOptions) &&
+    (value.cacheKey == null || isString(value.cacheKey))
+  )
+}
+
+function isHybridExportPlanRequest(value: unknown): value is HybridExportPlanRequest {
+  if (!isObject(value)) return false
+  return Array.isArray(value.segments) && value.segments.length > 0 && value.segments.every(isHybridExportSegmentRequest)
+}
+
 function isExportTraceMetrics(value: unknown): value is ExportTraceMetrics {
   if (!isObject(value)) return false
   return (
@@ -445,6 +491,9 @@ export function validateExportJobStartRequest(value: unknown): GuardResult<Expor
   }
   if (value.cacheKey != null && !isString(value.cacheKey)) {
     return { ok: false, error: 'Export request has an invalid cache key.' }
+  }
+  if (value.hybridPlan != null && !isHybridExportPlanRequest(value.hybridPlan)) {
+    return { ok: false, error: 'Export request has an invalid hybrid export plan.' }
   }
 
   return { ok: true, value: value as unknown as ExportJobStartRequest }

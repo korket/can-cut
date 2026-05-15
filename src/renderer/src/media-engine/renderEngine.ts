@@ -35,6 +35,7 @@ export interface ExportRendererControls {
   isCanceled?: () => boolean
   outputPath?: string
   cacheKey?: string
+  includeAudio?: boolean
 }
 
 export interface ExportRenderer {

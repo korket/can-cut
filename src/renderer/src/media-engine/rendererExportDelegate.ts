@@ -8,6 +8,7 @@ interface RendererExportPayload {
   plan: RenderPlan
   profile: ExportProfile
   cacheKey?: string
+  includeAudio?: boolean
 }
 
 let started = false
@@ -46,9 +47,10 @@ export function startRendererExportDelegate(): void {
 
     runningJobs.add(payload.jobId)
     canceledJobs.delete(payload.jobId)
+    let result: Awaited<ReturnType<typeof canvasExportRenderer.export>>
 
     try {
-      const result = await canvasExportRenderer.export(
+      result = await canvasExportRenderer.export(
         payload.jobId,
         payload.plan,
         payload.profile,
@@ -59,15 +61,16 @@ export function startRendererExportDelegate(): void {
           isCanceled: () => canceledJobs.has(payload.jobId),
           outputPath: payload.outputPath,
           cacheKey: payload.cacheKey,
+          includeAudio: payload.includeAudio !== false,
         }
       )
-
-      await completeRendererExport(payload.jobId, result)
     } catch (err: unknown) {
-      await completeRendererExport(payload.jobId, { error: String(err) })
+      result = { error: String(err) }
     } finally {
       runningJobs.delete(payload.jobId)
       canceledJobs.delete(payload.jobId)
     }
+
+    await completeRendererExport(payload.jobId, result)
   })
 }

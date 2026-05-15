@@ -263,10 +263,17 @@ async function exportNativeVideo(
       inputOf.set(clip.origIdx, nextInput++)
     }
 
-    const audioOnlyClips = clipsInfo.filter((clip) => clip.type === 'audio')
+    const includeAudio = options.includeAudio !== false
+    const audioOnlyClips = includeAudio ? clipsInfo.filter((clip) => clip.type === 'audio') : []
     for (const clip of audioOnlyClips) {
       cmd.input(clip.path)
       inputOf.set(clip.origIdx, nextInput++)
+    }
+
+    if (nextInput === 0) {
+      // fluent-ffmpeg probes the first input unconditionally; generated-only
+      // filtergraphs need a harmless input to avoid its empty-input crash.
+      cmd.input('color=black:s=2x2:d=0.1').inputFormat('lavfi')
     }
 
     const parts: string[] = []
@@ -429,10 +436,12 @@ async function exportNativeVideo(
     }
 
     const audioLabels: string[] = []
-    const audioSources = [
-      ...clipsInfo.filter((clip) => clip.type === 'video' && clip.hasAudio),
-      ...audioOnlyClips,
-    ]
+    const audioSources = includeAudio
+      ? [
+        ...clipsInfo.filter((clip) => clip.type === 'video' && clip.hasAudio),
+        ...audioOnlyClips,
+      ]
+      : []
 
     for (let ai = 0; ai < audioSources.length; ai++) {
       const clip = audioSources[ai]
@@ -450,18 +459,21 @@ async function exportNativeVideo(
       parts.push(`${audioLabels.join('')}amix=inputs=${audioLabels.length}:normalize=0:duration=longest[aout]`)
     }
 
+    const outputOptions = ['-y', `-r ${fps}`, ...getFluentVideoEncoderOptions(encoder)]
+    if (!includeAudio) outputOptions.push('-an')
+
     cmd
+      .output(outPath)
       .complexFilter(parts.join(';'))
       .map('[vout]')
       .videoCodec(encoder.videoCodec)
-      .outputOptions(['-y', `-r ${fps}`, ...getFluentVideoEncoderOptions(encoder)])
+      .outputOptions(outputOptions)
 
     if (audioLabels.length > 0) {
       cmd.map('[aout]').audioCodec(encoder.audioCodec).audioBitrate(encoder.audioBitrate)
     }
 
     cmd
-      .output(outPath)
       .on('start', (commandLine) => host.emitLog(jobId, `FFmpeg native command: ${commandLine}`))
       .on('stderr', (line) => {
         const message = String(line).trim()

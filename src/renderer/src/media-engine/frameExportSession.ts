@@ -26,6 +26,7 @@ export interface FrameExportOptions {
   totalMs: number
   encoder: ExportEncoderSettings
   outputPath?: string
+  includeAudio?: boolean
   clips: FrameExportClip[]
   timelineItems: FrameExportItem[]
 }
@@ -70,7 +71,8 @@ export function createFrameExportOptions(
   clips: MediaClip[],
   timelineItems: TimelineItem[],
   encoder: ExportEncoderSettings = DEFAULT_EXPORT_PROFILE.encoder,
-  outputPath?: string
+  outputPath?: string,
+  includeAudio = true
 ): FrameExportOptions {
   return {
     W: width,
@@ -79,6 +81,7 @@ export function createFrameExportOptions(
     totalMs,
     encoder,
     outputPath,
+    includeAudio,
     clips: clips.map((clip) => ({
       id: clip.id,
       path: clip.path ?? '',

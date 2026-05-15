@@ -54,7 +54,8 @@ export interface NativeExportOptions {
   }>
 }
 
-export type RenderBackend = 'ffmpeg-native' | 'renderer-canvas'
+export type RenderBackend = 'ffmpeg-native' | 'renderer-canvas' | 'hybrid'
+export type SegmentRenderBackend = Exclude<RenderBackend, 'hybrid'>
 
 export type NativeExportEligibility =
   | { ok: true }
@@ -139,7 +140,7 @@ function getNativeClipAnimationIneligibility(layer: { animation?: Animation }, d
   return 'clip animation requires renderer export'
 }
 
-function getNativeTextIneligibility(layer: TextOverlay): string | null {
+export function getNativeTextLayerIneligibility(layer: TextOverlay): string | null {
   const durationMs = layer.endTime - layer.startTime
   const animationReason = getNativeClipAnimationIneligibility(layer, durationMs)
   const fontFamily = (layer.fontFamily || 'sans-serif').trim()
@@ -174,42 +175,49 @@ function getNativeTransitionIneligibility(layer: NativeTransitionLayer): string 
   return 'transitions require renderer export for frame-accurate timing'
 }
 
+export function getNativeVideoLayerIneligibility(layer: RenderPlan['videoLayers'][number]): string | null {
+  const transitionReason = getNativeTransitionIneligibility(layer)
+  if (transitionReason) return transitionReason
+
+  if (layer.kenBurns) {
+    return 'Ken Burns requires renderer export'
+  }
+  if ((layer.keyframeTracks?.length ?? 0) > 0) {
+    return 'keyframes require renderer export'
+  }
+  const animationReason = layer.transitionIn && layer.transitionIn.type !== 'cut' && !animationIsDefault(layer)
+    ? 'combined transitions and clip animations require renderer export'
+    : getNativeClipAnimationIneligibility(layer, getItemDuration(layer))
+  if (animationReason) {
+    return animationReason
+  }
+
+  const transform = { ...DEFAULT_TRANSFORM, ...layer.transform }
+  if (!near(transform.pitch, 0) || !near(transform.yaw, 0)) {
+    return '3D rotation requires renderer export'
+  }
+
+  const effects = { ...DEFAULT_EFFECTS, ...layer.effects }
+  if (effects.shadowOpacity > 0 || effects.backdropBlur > 0 || effects.compositeMode !== 'normal') {
+    return 'advanced layer effects require renderer export'
+  }
+
+  if (layer.asset.type === 'solid' && (!isDefaultTransform(transform) || !isDefaultEffects(effects))) {
+    return 'transformed solid clips require renderer export'
+  }
+
+  return null
+}
+
 export function getNativeExportEligibility(plan: RenderPlan): NativeExportEligibility {
   for (const layer of plan.textLayers) {
-    const reason = getNativeTextIneligibility(layer)
+    const reason = getNativeTextLayerIneligibility(layer)
     if (reason) return { ok: false, reason }
   }
 
   for (const layer of plan.videoLayers) {
-    const transitionReason = getNativeTransitionIneligibility(layer)
-    if (transitionReason) return { ok: false, reason: transitionReason }
-
-    if (layer.kenBurns) {
-      return { ok: false, reason: 'Ken Burns requires renderer export' }
-    }
-    if ((layer.keyframeTracks?.length ?? 0) > 0) {
-      return { ok: false, reason: 'keyframes require renderer export' }
-    }
-    const animationReason = layer.transitionIn && layer.transitionIn.type !== 'cut' && !animationIsDefault(layer)
-      ? 'combined transitions and clip animations require renderer export'
-      : getNativeClipAnimationIneligibility(layer, getItemDuration(layer))
-    if (animationReason) {
-      return { ok: false, reason: animationReason }
-    }
-
-    const transform = { ...DEFAULT_TRANSFORM, ...layer.transform }
-    if (!near(transform.pitch, 0) || !near(transform.yaw, 0)) {
-      return { ok: false, reason: '3D rotation requires renderer export' }
-    }
-
-    const effects = { ...DEFAULT_EFFECTS, ...layer.effects }
-    if (effects.shadowOpacity > 0 || effects.backdropBlur > 0 || effects.compositeMode !== 'normal') {
-      return { ok: false, reason: 'advanced layer effects require renderer export' }
-    }
-
-    if (layer.asset.type === 'solid' && (!isDefaultTransform(transform) || !isDefaultEffects(effects))) {
-      return { ok: false, reason: 'transformed solid clips require renderer export' }
-    }
+    const reason = getNativeVideoLayerIneligibility(layer)
+    if (reason) return { ok: false, reason }
   }
 
   return { ok: true }

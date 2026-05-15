@@ -1,12 +1,13 @@
 import { buildNativeExportOptions, type NativeExportOptions, type RenderBackend } from '../editor-core/exportPlanning'
 import { buildExportPreflight, type ExportPreflight } from '../editor-core/exportPreflight'
 import { DEFAULT_EXPORT_PROFILE, type ExportProfile } from '../editor-core/exportSettings'
+import { createHybridExportPlan, type HybridExportPlan } from '../editor-core/hybridExportPlanning'
 import { getExportMediaPaths, type ExportValidationReport } from '../editor-core/exportValidation'
 import type { RenderPlan } from '../editor-core/renderPlan'
 import { createRenderCacheDescriptor, createRenderCacheKey } from './renderCache'
 import type { ExportTraceMetrics } from './renderEngine'
 
-export type ExportJobMode = 'native' | 'renderer'
+export type ExportJobMode = 'native' | 'renderer' | 'hybrid'
 export type ExportJobStatus = 'queued' | 'running' | 'canceling' | 'completed' | 'failed' | 'canceled' | 'interrupted'
 
 export interface ExportJob {
@@ -58,6 +59,7 @@ export interface ExportJobStartRequest {
   nativeOptions: NativeExportOptions
   mediaPaths: string[]
   cacheKey?: string
+  hybridPlan?: HybridExportPlan
 }
 
 export function isTerminalExportStatus(status: ExportJobStatus): boolean {
@@ -69,6 +71,10 @@ export function createExportJobStartRequest(
   profile: ExportProfile = DEFAULT_EXPORT_PROFILE
 ): ExportJobStartRequest {
   const preflight = buildExportPreflight(plan, profile)
+  const hybridPlan = preflight.backend === 'hybrid'
+    ? createHybridExportPlan(plan, profile)
+    : undefined
+
   return {
     plan,
     profile,
@@ -78,5 +84,6 @@ export function createExportJobStartRequest(
     cacheKey: preflight.backend === 'renderer-canvas'
       ? createRenderCacheKey(createRenderCacheDescriptor(plan, profile, 'renderer-canvas'))
       : undefined,
+    hybridPlan,
   }
 }

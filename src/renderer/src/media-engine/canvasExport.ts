@@ -27,6 +27,7 @@ export interface CanvasExportControls {
   isCanceled?: () => boolean
   outputPath?: string
   cacheKey?: string
+  includeAudio?: boolean
 }
 
 function createCanvas(width: number, height: number, willReadFrequently: boolean) {
@@ -109,7 +110,7 @@ export async function renderPlanToCanvasExport(
     const encoderStart = performance.now()
     const startResult = await startFrameExportSession(
       jobId,
-      createFrameExportOptions(width, height, fps, totalMs, clips, timelineItems, encoder, controls.outputPath)
+      createFrameExportOptions(width, height, fps, totalMs, clips, timelineItems, encoder, controls.outputPath, controls.includeAudio !== false)
     )
     trace.encoderStartMs = performance.now() - encoderStart
     if ('canceled' in startResult) {

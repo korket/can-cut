@@ -27,7 +27,20 @@ function jobStatusLabel(job: ExportJobSnapshot | null) {
   if (job.status === 'failed') return 'Failed'
   if (job.status === 'canceled') return 'Canceled'
   if (job.status === 'interrupted') return 'Interrupted'
+  if (job.mode === 'hybrid') return 'Hybrid'
   return job.mode === 'native' ? 'Fast' : 'Render'
+}
+
+function backendLabel(backend: ExportJobSnapshot['backend']): string {
+  if (backend === 'ffmpeg-native') return 'Fast native FFmpeg'
+  if (backend === 'hybrid') return 'Hybrid export'
+  return 'Canvas render'
+}
+
+function jobModeLabel(job: ExportJobSnapshot): string {
+  if (job.mode === 'native') return 'fast path'
+  if (job.mode === 'hybrid') return 'hybrid export'
+  return 'canvas render'
 }
 
 function jobTitle(job: ExportJobSnapshot) {
@@ -47,13 +60,28 @@ function formatBytes(bytes: number | undefined) {
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
 }
 
+const VIDEO_CODEC_PRIORITY: ExportVideoCodec[] = ['h264_nvenc', 'h264_qsv', 'h264_amf', 'libx264']
+
+function isExportVideoCodec(value: string): value is ExportVideoCodec {
+  return VIDEO_CODEC_PRIORITY.includes(value as ExportVideoCodec)
+}
+
+function selectPreferredVideoCodec(encoders: string[] | null): ExportVideoCodec {
+  const usable = new Set((encoders ?? []).filter(isExportVideoCodec))
+  for (const codec of VIDEO_CODEC_PRIORITY) {
+    if (usable.has(codec)) return codec
+  }
+  return 'libx264'
+}
+
 export default function ExportModal({ onClose }: Props) {
   const { clips, timelineItems, textOverlays, getTimelineDuration } = useEditorStore()
   const [resolution, setResolution] = useState('1920x1080')
   const [fps, setFps] = useState(30)
   const [profileId, setProfileId] = useState<ExportProfileId>(DEFAULT_EXPORT_PROFILE.id)
   const [videoCodec, setVideoCodec] = useState<ExportVideoCodec>('libx264')
-  const [availableVideoEncoders, setAvailableVideoEncoders] = useState<string[] | null>(null)
+  const [usableVideoEncoders, setUsableVideoEncoders] = useState<string[] | null>(null)
+  const [autoSelectEncoder, setAutoSelectEncoder] = useState(true)
   const [jobs, setJobs] = useState<ExportJobSnapshot[]>(() => exportJobManager.getJobs())
   const [selectedJobId, setSelectedJobId] = useState<string | null>(() => exportJobManager.getLatestActiveJob()?.id ?? null)
   const [startError, setStartError] = useState<string | null>(null)
@@ -65,11 +93,19 @@ export default function ExportModal({ onClose }: Props) {
   )
   const selectedVideoEncoder = getVideoEncoderOption(selectedProfile.encoder.videoCodec)
   const videoEncoderOptions = useMemo(() => {
-    if (!availableVideoEncoders) return VIDEO_ENCODERS
-    const available = new Set(availableVideoEncoders)
-    return VIDEO_ENCODERS.filter((encoder) => encoder.codec === 'libx264' || available.has(encoder.codec))
-  }, [availableVideoEncoders])
+    if (!usableVideoEncoders) return VIDEO_ENCODERS
+    const usable = new Set(usableVideoEncoders)
+    return VIDEO_ENCODERS.filter((encoder) => usable.has(encoder.codec))
+  }, [usableVideoEncoders])
+  const preferredVideoCodec = useMemo(() => selectPreferredVideoCodec(usableVideoEncoders), [usableVideoEncoders])
   const hasHardwareEncoderOption = videoEncoderOptions.some((encoder) => encoder.codec !== 'libx264')
+  const encoderHelpText = !usableVideoEncoders
+    ? 'Detecting usable hardware encoders...'
+    : !hasHardwareEncoderOption
+      ? 'No working hardware H.264 encoder detected; using Software x264.'
+      : autoSelectEncoder && videoCodec === preferredVideoCodec && videoCodec !== 'libx264'
+        ? `Auto-selected ${selectedVideoEncoder.label} from detected hardware.`
+        : selectedVideoEncoder.description
   const currentRenderPlan = useMemo(
     () => createRenderPlan({ resolution, fps, duration: getTimelineDuration(), timelineItems, clips, textOverlays }),
     [resolution, fps, getTimelineDuration, timelineItems, clips, textOverlays]
@@ -87,7 +123,9 @@ export default function ExportModal({ onClose }: Props) {
   const hasActiveJob = jobs.some((job) => !isTerminalExportStatus(job.status))
   const backendDetail = currentPreflight.backend === 'ffmpeg-native'
     ? 'Fast path: FFmpeg renders supported edits directly and avoids canvas frame transfer.'
-    : currentPreflight.backendReason ?? 'Canvas fallback: timeline requires renderer-only features.'
+    : currentPreflight.backend === 'hybrid'
+      ? currentPreflight.backendReason ?? 'Hybrid export renders complex ranges and uses FFmpeg for simple ranges.'
+      : currentPreflight.backendReason ?? 'Canvas fallback: timeline requires renderer-only features.'
 
   useEffect(() => {
     function syncJobs() {
@@ -100,16 +138,26 @@ export default function ExportModal({ onClose }: Props) {
 
   useEffect(() => {
     let canceled = false
-    window.api.listVideoEncoders()
-      .then((encoders) => { if (!canceled) setAvailableVideoEncoders(encoders) })
-      .catch(() => { if (!canceled) setAvailableVideoEncoders([]) })
+    window.api.listUsableVideoEncoders()
+      .then((encoders) => { if (!canceled) setUsableVideoEncoders(encoders) })
+      .catch(() => { if (!canceled) setUsableVideoEncoders(['libx264']) })
     return () => { canceled = true }
   }, [])
 
   useEffect(() => {
-    if (videoEncoderOptions.some((encoder) => encoder.codec === videoCodec)) return
-    setVideoCodec('libx264')
-  }, [videoEncoderOptions, videoCodec])
+    if (!usableVideoEncoders) return
+
+    const selectedCodecIsUsable = videoEncoderOptions.some((encoder) => encoder.codec === videoCodec)
+    if (!selectedCodecIsUsable) {
+      setAutoSelectEncoder(true)
+      setVideoCodec(preferredVideoCodec)
+      return
+    }
+
+    if (autoSelectEncoder && videoCodec !== preferredVideoCodec) {
+      setVideoCodec(preferredVideoCodec)
+    }
+  }, [autoSelectEncoder, preferredVideoCodec, usableVideoEncoders, videoCodec, videoEncoderOptions])
 
   useEffect(() => {
     if (selectedJobId && jobs.some((job) => job.id === selectedJobId)) return
@@ -174,16 +222,19 @@ export default function ExportModal({ onClose }: Props) {
 
         <div style={styles.field}>
           <label style={styles.label}>Encoder</label>
-          <select style={styles.select} value={videoCodec} onChange={(e) => setVideoCodec(e.target.value as ExportVideoCodec)}>
+          <select
+            style={styles.select}
+            value={videoCodec}
+            onChange={(e) => {
+              setAutoSelectEncoder(false)
+              setVideoCodec(e.target.value as ExportVideoCodec)
+            }}
+          >
             {videoEncoderOptions.map((encoder) => (
               <option key={encoder.codec} value={encoder.codec}>{encoder.label} - {encoder.description}</option>
             ))}
           </select>
-          <div style={styles.helpText}>
-            {availableVideoEncoders && !hasHardwareEncoderOption
-              ? 'Bundled FFmpeg did not report hardware H.264 encoders on this system.'
-              : selectedVideoEncoder.description}
-          </div>
+          <div style={styles.helpText}>{encoderHelpText}</div>
         </div>
 
         <button style={styles.exportBtn} onClick={handleExport} disabled={timelineItems.length === 0}>
@@ -196,7 +247,7 @@ export default function ExportModal({ onClose }: Props) {
         <div style={styles.preflight}>
           <div style={styles.preflightRow}>
             <span style={styles.preflightLabel}>Backend</span>
-            <span style={styles.preflightValue}>{currentPreflight.backend === 'ffmpeg-native' ? 'Fast native FFmpeg' : 'Canvas render'}</span>
+            <span style={styles.preflightValue}>{backendLabel(currentPreflight.backend)}</span>
           </div>
           <div style={styles.preflightDetail}>{backendDetail}</div>
           <div style={styles.preflightRow}>
@@ -213,7 +264,7 @@ export default function ExportModal({ onClose }: Props) {
           </div>
           <div style={styles.preflightRow}>
             <span style={styles.preflightLabel}>Frame Pipe</span>
-            <span style={styles.preflightValue}>{currentPreflight.backend === 'ffmpeg-native' ? 'Not used' : currentPreflight.framePipeFormat === 'raw-rgba' ? 'Raw RGBA' : 'MJPEG'}</span>
+            <span style={styles.preflightValue}>{currentPreflight.backend === 'ffmpeg-native' ? 'Not used' : currentPreflight.backend === 'hybrid' ? 'Mixed per segment' : currentPreflight.framePipeFormat === 'raw-rgba' ? 'Raw RGBA' : 'MJPEG'}</span>
           </div>
           {currentPreflight.warnings.length > 0 && (
             <div style={styles.warningList}>
@@ -344,7 +395,7 @@ export default function ExportModal({ onClose }: Props) {
                 >
                   <div style={styles.jobMain}>
                     <span style={styles.jobName}>{jobTitle(job)}</span>
-                    <span style={styles.jobMeta}>{jobStatusLabel(job)} | {job.profile.label} | {getVideoEncoderOption(job.profile.encoder.videoCodec).label} | {job.preflight.frameCount.toLocaleString()} frames | {job.mode === 'native' ? 'fast path' : 'canvas render'}</span>
+                    <span style={styles.jobMeta}>{jobStatusLabel(job)} | {job.profile.label} | {getVideoEncoderOption(job.profile.encoder.videoCodec).label} | {job.preflight.frameCount.toLocaleString()} frames | {jobModeLabel(job)}</span>
                   </div>
 
                   <div style={styles.jobProgress}>

@@ -6,6 +6,7 @@ const appApi = {
   openFiles:    () => ipcRenderer.invoke('dialog:openFiles'),
   getVideoInfo: (path: string) => ipcRenderer.invoke('ffprobe:getInfo', path),
   listVideoEncoders: () => ipcRenderer.invoke('ffmpeg:listVideoEncoders'),
+  listUsableVideoEncoders: () => ipcRenderer.invoke('ffmpeg:listUsableVideoEncoders'),
   getThumbnail: (path: string, timeMs: number) => ipcRenderer.invoke('ffmpeg:thumbnail', path, timeMs),
   validateMediaPaths: (paths: string[]) => ipcRenderer.invoke('media:validatePaths', paths),
   resolveMediaImportPaths: (paths: string[]) => ipcRenderer.invoke('media:resolveImportPaths', paths),

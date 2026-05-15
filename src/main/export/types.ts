@@ -101,6 +101,7 @@ export interface ExportOptions {
   duration: number
   encoder: ExportEncoderSettings
   outputPath?: string
+  includeAudio?: boolean
 }
 
 export interface FrameClip {
@@ -126,6 +127,7 @@ export interface FrameExportOptions {
   totalMs: number
   encoder: ExportEncoderSettings
   outputPath?: string
+  includeAudio?: boolean
   clips: FrameClip[]
   timelineItems: FrameItem[]
 }
