@@ -92,6 +92,7 @@ export interface CanvasFrameRenderOptions {
   strictSeek?: boolean
   realtimeVideoPlayback?: boolean
   prepareVideoBeforeClear?: boolean
+  editPointToleranceMs?: number
   shouldContinue?: () => boolean
 }
 
@@ -153,6 +154,40 @@ function getFrozenOutgoingClipTime(item: TimelineItem, clip: MediaClip): number 
 
   const fps = Number.isFinite(clip.fps) && clip.fps > 0 ? clip.fps : 30
   return Math.max(0, duration - 1000 / fps)
+}
+
+function findNextSameTrackItem(item: TimelineItem, timelineItems: TimelineItem[]): TimelineItem | null {
+  const itemEnd = getItemEnd(item)
+  let next: TimelineItem | null = null
+
+  for (const candidate of timelineItems) {
+    if (candidate.id === item.id || candidate.trackIndex !== item.trackIndex) continue
+    if (candidate.startTime < itemEnd) continue
+    if (!next || candidate.startTime < next.startTime) next = candidate
+  }
+
+  return next
+}
+
+function getEditPointBridgeClipTime(
+  item: TimelineItem,
+  clip: MediaClip,
+  timeMs: number,
+  timelineItems: TimelineItem[],
+  toleranceMs: number | undefined
+): number | null {
+  if (!toleranceMs || toleranceMs <= 0 || clip.type === 'audio') return null
+  const itemEnd = getItemEnd(item)
+  if (timeMs < itemEnd) return null
+
+  const next = findNextSameTrackItem(item, timelineItems)
+  if (!next) return null
+  if (next.transitionIn && next.transitionIn.type !== 'cut') return null
+  const gapMs = next.startTime - itemEnd
+  if (gapMs < 0 || gapMs > toleranceMs) return null
+  if (timeMs < itemEnd || timeMs >= next.startTime + toleranceMs) return null
+
+  return getFrozenOutgoingClipTime(item, clip)
 }
 
 function drawMedia(
@@ -565,6 +600,12 @@ async function prepareVideoFramesBeforeClear(
 
     if (isItemActiveAt(item, timeMs)) {
       await prepareVideoFrame(item, clip, timeMs - item.startTime, videoEls, options, preparedIds)
+      continue
+    }
+
+    const bridgedClipTime = getEditPointBridgeClipTime(item, clip, timeMs, timelineItems, options.editPointToleranceMs)
+    if (bridgedClipTime != null) {
+      await prepareVideoFrame(item, clip, bridgedClipTime, videoEls, options, preparedIds)
     }
   }
 }
@@ -770,7 +811,8 @@ export async function renderCanvasFrame(
       const c = clips.find(cl => cl.id === item.clipId)
       return c && c.type !== 'audio' && (
         isItemActiveAt(item, timeMs) ||
-        getTransitionRenderState(item, timeMs, timelineItems, clips) !== null
+        getTransitionRenderState(item, timeMs, timelineItems, clips) !== null ||
+        getEditPointBridgeClipTime(item, c, timeMs, timelineItems, options.editPointToleranceMs) !== null
       )
     })
     .map(item => ({ kind: 'media' as const, trackIndex: item.trackIndex, startTime: item.startTime, item }))
@@ -790,7 +832,8 @@ export async function renderCanvasFrame(
 
     const item = visualLayer.item
     const clip = clips.find(c => c.id === item.clipId)!
-    const clipTime = timeMs - item.startTime
+    const bridgeClipTime = getEditPointBridgeClipTime(item, clip, timeMs, timelineItems, options.editPointToleranceMs)
+    const clipTime = bridgeClipTime ?? (timeMs - item.startTime)
 
     // ── Transition: find outgoing item and render it first ──────────────────
     const transitionState = getTransitionRenderState(item, timeMs, timelineItems, clips)

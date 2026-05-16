@@ -120,11 +120,12 @@ Goal: move preview playback toward a CapCut/Resolve-style architecture instead o
 - Proxy cache validated and reused across app restarts. ✅
 - Transient proxy state stripped from project files (no stale paths saved). ✅
 
-### Phase 2: Proxy Job UI (Partial)
+### Phase 2: Proxy Job UI ✅
 - Background proxy status badges in Media Bin (`PROXY`, `PROXY...`, `NO PROXY`). ✅
-- Preview quality setting. ❌
-- Manual regenerate proxy action. ❌
-- Dedicated proxy job queue/management panel. ❌
+- Preview quality setting (`Auto proxy`, `Proxy 720p`, `Original`). ✅
+- Manual regenerate/retry proxy action from clip context menu. ✅
+- Media Bin controls for generating missing proxies and regenerating all proxies. ✅
+- Basic renderer-side proxy queue/status management with running/queued/failed summary. ✅
 
 ### Phase 3: Media-Aware Playback Clock ❌
 - Use video frame callbacks / video-driven timing.
@@ -143,8 +144,8 @@ Goal: move preview playback toward a CapCut/Resolve-style architecture instead o
 
 ## Current Status
 
-Phase 1 is fully implemented, manually verified, and ready for use. Proxy generation runs automatically on import and on project open. Preview uses ready proxies while export always uses original media. Transient proxy metadata is excluded from project save/load to avoid stale machine-local path issues.
+Phase 1 and Phase 2 are implemented. Proxy generation runs automatically on import and on project open. Preview can use ready proxies or original media based on the preview quality setting, while export always uses original media. Transient proxy metadata is excluded from project save/load to avoid stale machine-local path issues. Media Bin now exposes proxy status, generate missing, regenerate all, and per-clip retry/regenerate actions.
 
 ## Next Up
 
-Phase 2: preview quality controls, manual regenerate, and a proper proxy job management system.
+Phase 3: media-aware playback clock. The preview engine should become frame-availability-aware instead of advancing only from a wall-clock timer.

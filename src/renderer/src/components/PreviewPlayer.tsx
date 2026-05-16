@@ -23,12 +23,13 @@ function createPreviewPlanFromState(state: {
   timelineItems: TimelineItem[]
   textOverlays: TextOverlay[]
   fps: number
+  previewQuality: ReturnType<typeof useEditorStore.getState>['previewQuality']
 }): RenderPlan {
   return createRenderPlan({
     resolution: '1920x1080',
     fps: state.fps,
     timelineItems: state.timelineItems,
-    clips: withPreviewSources(state.clips),
+    clips: withPreviewSources(state.clips, state.previewQuality),
     textOverlays: state.textOverlays,
   })
 }
@@ -40,7 +41,7 @@ export default function PreviewPlayer() {
     currentTime, setCurrentTime, isPlaying, setIsPlaying,
     fps, selectedId, updateTransform, updateTimelineItem,
     hoverPreviewClip, tool, addTextOverlay, updateTextOverlay, setSelectedId,
-    videoTrackCount, titleFontPreview,
+    videoTrackCount, titleFontPreview, previewQuality, setPreviewQuality,
   } = useEditorStore()
 
   const previewEngineRef = useRef<PreviewEngine | null>(null)
@@ -85,8 +86,8 @@ export default function PreviewPlayer() {
   }, [textOverlays, titleFontPreview])
 
   const renderPlan = useMemo(
-    () => createPreviewPlanFromState({ clips, timelineItems, textOverlays: previewTextOverlays, fps }),
-    [clips, timelineItems, previewTextOverlays, fps]
+    () => createPreviewPlanFromState({ clips, timelineItems, textOverlays: previewTextOverlays, fps, previewQuality }),
+    [clips, timelineItems, previewTextOverlays, fps, previewQuality]
   )
   const previewTimelineItems = useMemo(() => getRenderPlanTimelineItems(renderPlan), [renderPlan])
   const previewClips = useMemo(() => getRenderPlanAssets(renderPlan), [renderPlan])
@@ -316,7 +317,7 @@ export default function PreviewPlayer() {
               {hoverPreviewClip.type === 'video' && (
                 <video
                   key={hoverPreviewClip.id}
-                  src={toFileUrl(getPreviewSourcePath(hoverPreviewClip))}
+                  src={toFileUrl(getPreviewSourcePath(hoverPreviewClip, previewQuality))}
                   autoPlay muted loop
                   style={{ width: '100%', height: '100%', objectFit: 'contain' }}
                 />
@@ -392,6 +393,16 @@ export default function PreviewPlayer() {
             title="Set Ken Burns focal point"
           >◎</button>
         )}
+        <select
+          style={styles.qualitySelect}
+          value={previewQuality}
+          onChange={e => setPreviewQuality(e.target.value as typeof previewQuality)}
+          title="Preview source quality"
+        >
+          <option value="auto">Auto proxy</option>
+          <option value="proxy-720p">Proxy 720p</option>
+          <option value="original">Original</option>
+        </select>
       </div>
     </div>
   )
@@ -591,6 +602,7 @@ const styles: Record<string, React.CSSProperties> = {
   seekBar:           { flex: 1, accentColor: '#e63950', cursor: 'pointer', height: 20 },
   transformToggle:   { background: 'none', border: '1px solid #333', color: '#555', fontSize: 18, width: 30, height: 30, borderRadius: 5, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   transformToggleOn: { borderColor: '#e63950', color: '#e63950', background: 'rgba(230,57,80,0.1)' },
+  qualitySelect:     { background: '#181818', border: '1px solid #333', color: '#888', borderRadius: 5, padding: '5px 7px', fontSize: 11, outline: 'none', flexShrink: 0 },
 
   fsControls: { position: 'absolute', bottom: 0, left: 0, right: 0, padding: '12px 20px 16px', background: 'linear-gradient(transparent, rgba(0,0,0,0.85))', transition: 'opacity 0.3s', zIndex: 30, pointerEvents: 'all' },
   fsSeekRow:  { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 10 },

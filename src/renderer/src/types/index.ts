@@ -18,6 +18,8 @@ export interface MediaProxyInfo {
   generatedAt?: string
 }
 
+export type PreviewQuality = 'auto' | 'original' | 'proxy-720p'
+
 export interface MediaClip {
   id: string
   name: string

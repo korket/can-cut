@@ -1,5 +1,12 @@
 import { useState, useEffect, useRef } from 'react'
 import { useEditorStore } from '../store/useEditorStore'
+import {
+  enqueueVideoProxiesForClips,
+  enqueueVideoProxyForClip,
+  getProxyJobs,
+  subscribeProxyJobs,
+  type ProxyJobSnapshot,
+} from '../media-engine/proxyJobs'
 import type { MediaClip, MediaFolder, TimelineItem } from '../types'
 import { toFileUrl } from '../utils/fileUrl'
 import { nanoid } from '../utils/nanoid'
@@ -47,10 +54,10 @@ interface CtxMenuProps {
   clip: MediaClip; folders: MediaFolder[]
   x: number; y: number
   onClose: () => void; onAdd: () => void
-  onMoveToFolder: (id: string | null) => void; onRemove: () => void
+  onMoveToFolder: (id: string | null) => void; onRemove: () => void; onGenerateProxy: () => void; onRelinkMedia: () => void
 }
 
-function ContextMenu({ clip, folders, x, y, onClose, onAdd, onMoveToFolder, onRemove }: CtxMenuProps) {
+function ContextMenu({ clip, folders, x, y, onClose, onAdd, onMoveToFolder, onRemove, onGenerateProxy, onRelinkMedia }: CtxMenuProps) {
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const onDown = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) onClose() }
@@ -60,7 +67,7 @@ function ContextMenu({ clip, folders, x, y, onClose, onAdd, onMoveToFolder, onRe
     return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey) }
   }, [onClose])
 
-  const menuW = 190, menuH = 40 + folders.length * 32 + 80
+  const menuW = 190, menuH = 40 + folders.length * 32 + 150
   const cx = x + menuW > window.innerWidth  ? x - menuW : x
   const cy = y + menuH > window.innerHeight ? y - menuH : y
 
@@ -73,19 +80,32 @@ function ContextMenu({ clip, folders, x, y, onClose, onAdd, onMoveToFolder, onRe
         {folders.map(f => <Ci key={f.id} label={f.name} onDown={() => onMoveToFolder(f.id)} />)}
         {clip.folderId && <Ci label="Remove from folder" onDown={() => onMoveToFolder(null)} />}
       </>}
+      {clip.type === 'video' && <>
+        <div style={s.ctxDiv} />
+        <Ci
+          label={clip.proxy?.status === 'ready' ? 'Regenerate proxy' : clip.proxy?.status === 'failed' ? 'Retry proxy' : clip.proxy?.status === 'generating' || clip.proxy?.status === 'queued' ? 'Proxy queued' : 'Generate proxy'}
+          onDown={onGenerateProxy}
+          disabled={clip.proxy?.status === 'generating' || clip.proxy?.status === 'queued'}
+        />
+      </>}
+      {clip.type !== 'solid' && <>
+        <div style={s.ctxDiv} />
+        <Ci label="Relink media..." onDown={onRelinkMedia} />
+      </>}
       <div style={s.ctxDiv} />
       <Ci label="Remove" danger onDown={onRemove} />
     </div>
   )
 }
 
-function Ci({ label, onDown, danger }: { label: string; onDown: () => void; danger?: boolean }) {
+function Ci({ label, onDown, danger, disabled }: { label: string; onDown: () => void; danger?: boolean; disabled?: boolean }) {
   const [hov, setHov] = useState(false)
   return (
     <button
-      style={{ ...s.ctxItem, ...(hov ? s.ctxItemHov : {}), ...(danger ? s.ctxDanger : {}) }}
+      style={{ ...s.ctxItem, ...(hov && !disabled ? s.ctxItemHov : {}), ...(danger ? s.ctxDanger : {}), ...(disabled ? s.ctxDisabled : {}) }}
       onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}
-      onMouseDown={e => { e.stopPropagation(); onDown() }}
+      onMouseDown={e => { e.stopPropagation(); if (!disabled) onDown() }}
+      disabled={disabled}
     >{label}</button>
   )
 }
@@ -232,7 +252,7 @@ function SidebarItem({ label, count, selected, isFolder, dragOver, editing, edit
 
 export default function MediaBin() {
   const {
-    clips, addClip, removeClip, addTimelineItem, getTimelineDuration, videoTrackCount,
+    clips, addClip, updateClip, removeClip, addTimelineItem, getTimelineDuration, videoTrackCount,
     folders, addFolder, removeFolder, renameFolder, moveClipToFolder,
     setHoverPreviewClip,
   } = useEditorStore()
@@ -250,6 +270,32 @@ export default function MediaBin() {
   const [sortMode, setSortMode]                 = useState<SortMode>('name-asc')
   const [viewMode, setViewMode]                 = useState<ViewMode>('grid')
   const [contextMenu, setContextMenu]           = useState<{ clipId: string; x: number; y: number } | null>(null)
+  const [proxyJobs, setProxyJobs]               = useState<ProxyJobSnapshot[]>(() => getProxyJobs())
+  const [missingClipIds, setMissingClipIds]     = useState<Set<string>>(new Set())
+  const [relinking, setRelinking]               = useState(false)
+
+  useEffect(() => subscribeProxyJobs(() => setProxyJobs(getProxyJobs())), [])
+
+  useEffect(() => {
+    const mediaClips = clips.filter((clip) => clip.type !== 'solid' && clip.path)
+    if (mediaClips.length === 0) {
+      setMissingClipIds(new Set())
+      return
+    }
+
+    let canceled = false
+    window.api.validateMediaPaths(mediaClips.map((clip) => clip.path))
+      .then((results) => {
+        if (canceled) return
+        const missingPaths = new Set(results.filter((result) => !result.exists || !result.isFile).map((result) => result.path))
+        setMissingClipIds(new Set(mediaClips.filter((clip) => missingPaths.has(clip.path)).map((clip) => clip.id)))
+      })
+      .catch(() => {
+        if (!canceled) setMissingClipIds(new Set())
+      })
+
+    return () => { canceled = true }
+  }, [clips])
 
   // If selected folder is deleted, go back to All Media
   useEffect(() => {
@@ -288,6 +334,45 @@ export default function MediaBin() {
 
   function sortFolders(list: MediaFolder[]) {
     return [...list].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true }))
+  }
+
+  function fileName(path: string): string {
+    return (path.split(/[\\/]/).pop() ?? path).toLowerCase()
+  }
+
+  function pathParts(path: string): string[] {
+    return path.replace(/\\/g, '/').split('/').filter(Boolean).map((part) => part.toLowerCase())
+  }
+
+  function matchingPathSuffixLength(sourcePath: string, candidatePath: string): number {
+    const sourceParts = pathParts(sourcePath)
+    const candidateParts = pathParts(candidatePath)
+    let score = 0
+    while (
+      score < sourceParts.length &&
+      score < candidateParts.length &&
+      sourceParts[sourceParts.length - 1 - score] === candidateParts[candidateParts.length - 1 - score]
+    ) {
+      score += 1
+    }
+    return score
+  }
+
+  function selectRelinkCandidate(sourcePath: string, candidates: string[]): string | null {
+    let bestScore = 0
+    let bestMatches: string[] = []
+
+    for (const candidate of candidates) {
+      const score = matchingPathSuffixLength(sourcePath, candidate)
+      if (score > bestScore) {
+        bestScore = score
+        bestMatches = [candidate]
+      } else if (score === bestScore) {
+        bestMatches.push(candidate)
+      }
+    }
+
+    return bestMatches.length === 1 ? bestMatches[0] : null
   }
 
   // Clips shown in main pane
@@ -351,6 +436,45 @@ export default function MediaBin() {
     setImporting(false)
   }
 
+  async function applyRelinkedPath(clip: MediaClip, nextPath: string) {
+    const changes: Partial<MediaClip> = {
+      path: nextPath,
+      proxy: clip.type === 'video' ? { status: 'queued', profile: '720p' } : undefined,
+    }
+
+    if (clip.type === 'image') changes.thumbnail = toFileUrl(nextPath)
+    if (clip.type === 'video') {
+      try {
+        changes.thumbnail = toFileUrl(await window.api.getThumbnail(nextPath, 0))
+      } catch (_) {}
+    }
+
+    updateClip(clip.id, changes)
+    if (clip.type === 'video') enqueueVideoProxyForClip({ ...clip, path: nextPath, proxy: changes.proxy })
+  }
+
+  function selectIndividualRelinkCandidate(clip: MediaClip, candidates: string[]): string | null {
+    if (candidates.length === 0) return null
+    if (candidates.length === 1) return candidates[0]
+    return selectRelinkCandidate(clip.path, candidates.filter((candidate) => fileName(candidate) === fileName(clip.path)))
+  }
+
+  async function relinkClip(clip: MediaClip) {
+    if (clip.type === 'solid') return
+    const paths = await window.api.openFiles()
+    if (!paths.length) return
+
+    const entries = await window.api.resolveMediaImportPaths(paths)
+    const candidates = entries.flatMap((entry) => entry.files)
+    const nextPath = selectIndividualRelinkCandidate(clip, candidates)
+    if (!nextPath) {
+      window.alert('Could not choose a unique replacement. Select the exact media file, or a folder with one matching file for this clip.')
+      return
+    }
+
+    await applyRelinkedPath(clip, nextPath)
+  }
+
   function handleSidebarDragOver(e: React.DragEvent, key: string | 'root') {
     if (!e.dataTransfer.types.includes('text/x-clip-id') && !e.dataTransfer.types.includes('Files')) return
     e.preventDefault()
@@ -397,6 +521,56 @@ export default function MediaBin() {
 
   const isEmpty = clips.length === 0 && folders.length === 0
   const visibleFolders = selectedFolder === null ? sortFolders(folders) : []
+  const videoClips = clips.filter((clip) => clip.type === 'video')
+  const missingProxyCount = videoClips.filter((clip) => clip.proxy?.status !== 'ready' && clip.proxy?.status !== 'generating' && clip.proxy?.status !== 'queued').length
+  const runningProxyCount = proxyJobs.filter((job) => job.status === 'running').length
+  const queuedProxyCount = proxyJobs.filter((job) => job.status === 'queued').length
+  const failedProxyCount = videoClips.filter((clip) => clip.proxy?.status === 'failed').length
+  const latestProxyError = proxyJobs.find((job) => job.status === 'failed' && job.error)?.error
+  const missingClips = clips.filter((clip) => missingClipIds.has(clip.id))
+
+  function generateMissingProxies() {
+    enqueueVideoProxiesForClips(videoClips.filter((clip) => clip.proxy?.status !== 'ready'))
+  }
+
+  function regenerateAllProxies() {
+    enqueueVideoProxiesForClips(videoClips, { force: true })
+  }
+
+  async function relinkMissingMedia() {
+    if (missingClips.length === 0) return
+    const paths = await window.api.openFiles()
+    if (!paths.length) return
+
+    setRelinking(true)
+    try {
+      const entries = await window.api.resolveMediaImportPaths(paths)
+      const candidates = entries.flatMap((entry) => entry.files)
+      const candidatesByName = new Map<string, string[]>()
+      for (const candidate of candidates) {
+        const key = fileName(candidate)
+        candidatesByName.set(key, [...(candidatesByName.get(key) ?? []), candidate])
+      }
+
+      let relinked = 0
+      for (const clip of missingClips) {
+        const matches = candidatesByName.get(fileName(clip.path)) ?? []
+        const nextPath = selectRelinkCandidate(clip.path, matches)
+        if (!nextPath) continue
+
+        await applyRelinkedPath(clip, nextPath)
+        relinked += 1
+      }
+
+      if (relinked === 0) {
+        window.alert('No missing clips could be matched. Select the folder that contains the moved media files.')
+      } else if (relinked < missingClips.length) {
+        window.alert(`${relinked} media file${relinked === 1 ? '' : 's'} relinked. ${missingClips.length - relinked} could not be matched uniquely.`)
+      }
+    } finally {
+      setRelinking(false)
+    }
+  }
 
   return (
     <div style={s.bin} onClick={() => contextMenu && setContextMenu(null)}>
@@ -446,6 +620,23 @@ export default function MediaBin() {
         <span style={s.solidLabel}>{solidColor.toUpperCase()}</span>
         <button style={s.solidBtn} onClick={addSolidColor}>+ Solid</button>
       </div>
+
+      {videoClips.length > 0 && (
+        <div style={s.proxyRow}>
+          <span style={s.proxySummary} title={latestProxyError ?? undefined}>
+            Proxies: {runningProxyCount} running, {queuedProxyCount} queued{failedProxyCount ? `, ${failedProxyCount} failed` : ''}
+          </span>
+          <button style={s.proxyBtn} onClick={generateMissingProxies} disabled={missingProxyCount === 0}>Generate missing</button>
+          <button style={s.proxyBtn} onClick={regenerateAllProxies}>Regenerate all</button>
+        </div>
+      )}
+
+      {missingClips.length > 0 && (
+        <div style={s.missingRow}>
+          <span style={s.missingSummary}>{missingClips.length} missing media file{missingClips.length === 1 ? '' : 's'}</span>
+          <button style={s.missingBtn} onClick={relinkMissingMedia} disabled={relinking}>{relinking ? 'Relinking...' : 'Relink folder'}</button>
+        </div>
+      )}
 
       {/* ── Two-pane body ── */}
       <div style={s.body}>
@@ -560,6 +751,8 @@ export default function MediaBin() {
           onClose={() => setContextMenu(null)}
           onAdd={() => { addToTimeline(clip); setContextMenu(null) }}
           onMoveToFolder={fId => { moveClipToFolder(clip.id, fId); setContextMenu(null) }}
+          onGenerateProxy={() => { enqueueVideoProxyForClip(clip, { force: true }); setContextMenu(null) }}
+          onRelinkMedia={() => { void relinkClip(clip); setContextMenu(null) }}
           onRemove={() => { removeClip(clip.id); setContextMenu(null) }}
         />
       })()}
@@ -596,6 +789,12 @@ const s: Record<string, React.CSSProperties> = {
   solidSwatch:{ width: 20, height: 20, padding: 0, border: '1px solid #3a3a3a', borderRadius: 3, cursor: 'pointer', background: 'none', flexShrink: 0 },
   solidLabel: { fontSize: 10, color: '#4a4a4a', fontFamily: 'monospace', flex: 1 },
   solidBtn:   { background: '#202020', border: 'none', color: '#aaa', padding: '3px 7px', borderRadius: 3, cursor: 'pointer', fontSize: 10 },
+  proxyRow:   { display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderBottom: '1px solid #1a1a1a', flexShrink: 0 },
+  proxySummary: { flex: 1, minWidth: 0, fontSize: 10, color: '#666', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  proxyBtn:   { background: '#202020', border: 'none', color: '#999', padding: '3px 6px', borderRadius: 3, cursor: 'pointer', fontSize: 10, whiteSpace: 'nowrap' },
+  missingRow: { display: 'flex', alignItems: 'center', gap: 5, padding: '5px 10px', borderBottom: '1px solid rgba(230,57,80,0.25)', background: 'rgba(230,57,80,0.08)', flexShrink: 0 },
+  missingSummary: { flex: 1, minWidth: 0, fontSize: 10, color: '#ff8b9a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  missingBtn: { background: 'rgba(230,57,80,0.22)', border: '1px solid rgba(230,57,80,0.35)', color: '#ffc0c8', padding: '3px 6px', borderRadius: 3, cursor: 'pointer', fontSize: 10, whiteSpace: 'nowrap' },
 
   // Body
   body: { display: 'flex', flex: 1, overflow: 'hidden', minHeight: 0 },
@@ -665,6 +864,7 @@ const s: Record<string, React.CSSProperties> = {
   ctxItem:    { display: 'block', width: '100%', background: 'none', border: 'none', color: '#bbb', textAlign: 'left' as const, padding: '6px 13px', fontSize: 12, cursor: 'pointer' },
   ctxItemHov: { background: '#2a2a2a' },
   ctxDanger:  { color: '#e05' },
+  ctxDisabled:{ color: '#444', cursor: 'default', background: 'none' },
   ctxDiv:     { height: 1, background: '#252525', margin: '3px 0' },
   ctxLbl:     { fontSize: 10, color: '#4a4a4a', padding: '3px 13px 1px', letterSpacing: '0.06em', textTransform: 'uppercase' as const },
 }

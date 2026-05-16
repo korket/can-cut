@@ -142,7 +142,7 @@ export async function renderPlanToCanvasExport(
         clips,
         textOverlays,
         media,
-        { seekTimeoutMs: 5000, strictSeek: true }
+        { seekTimeoutMs: 5000, strictSeek: true, editPointToleranceMs: frameMs + 0.01 }
       )
       trace.frameRenderMs = (trace.frameRenderMs ?? 0) + (performance.now() - renderStart)
 

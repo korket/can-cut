@@ -12,7 +12,7 @@ import { createProjectDocument, readEditorStateFromProjectData, stripTransientCl
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import { useEditorStore } from './store/useEditorStore'
 import { useHistoryStore } from './store/useHistoryStore'
-import { ensureVideoProxyForClip } from './utils/importClip'
+import { enqueueVideoProxyForClip } from './media-engine/proxyJobs'
 
 const AUTOSAVE_DELAY_MS = 1500
 const AUTO_VERSION_INTERVAL_MS = 60_000
@@ -194,7 +194,7 @@ function Editor({ projectId, projectName, projectCreatedAt, onBack, onOpenProjec
       if (queuedProxyClipIds.current.has(clip.id)) continue
 
       queuedProxyClipIds.current.add(clip.id)
-      ensureVideoProxyForClip(clip)
+      enqueueVideoProxyForClip(clip)
     }
   }, [clips])
 

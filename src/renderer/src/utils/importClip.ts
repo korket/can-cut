@@ -1,5 +1,6 @@
 import { useEditorStore } from '../store/useEditorStore'
-import type { MediaAnalysis, MediaClip, MediaProxyInfo } from '../types'
+import { enqueueVideoProxyForClip } from '../media-engine/proxyJobs'
+import type { MediaAnalysis, MediaClip } from '../types'
 import { toFileUrl } from './fileUrl'
 import { nanoid } from './nanoid'
 
@@ -54,52 +55,8 @@ function createMediaAnalysis(info: any, videoStream: any): MediaAnalysis {
   }
 }
 
-function proxyInfoFromResult(result: MediaProxyResult): MediaProxyInfo {
-  if (result.status === 'ready') {
-    return {
-      status: 'ready',
-      profile: result.profile,
-      path: result.path,
-      width: result.width,
-      height: result.height,
-      fps: result.fps,
-      generatedAt: result.generatedAt,
-    }
-  }
-
-  return {
-    status: 'failed',
-    profile: result.profile,
-    error: result.error,
-    generatedAt: result.generatedAt,
-  }
-}
-
 export function ensureVideoProxyForClip(clip: MediaClip): void {
-  if (clip.type !== 'video') return
-  const { updateClip } = useEditorStore.getState()
-  updateClip(clip.id, {
-    proxy: {
-      status: 'generating',
-      profile: '720p',
-      generatedAt: new Date().toISOString(),
-    },
-  })
-
-  void window.api.ensureVideoProxy({ path: clip.path, profile: '720p' })
-    .then((result) => {
-      useEditorStore.getState().updateClip(clip.id, { proxy: proxyInfoFromResult(result) })
-    })
-    .catch((error: unknown) => {
-      useEditorStore.getState().updateClip(clip.id, {
-        proxy: {
-          status: 'failed',
-          profile: '720p',
-          error: error instanceof Error ? error.message : String(error),
-          generatedAt: new Date().toISOString(),
-        },
-      })
-    })
+  enqueueVideoProxyForClip(clip)
 }
 
 const VIDEO_EXTS = new Set(['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv', 'flv'])

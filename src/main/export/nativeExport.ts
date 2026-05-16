@@ -156,6 +156,35 @@ function getClipEnd(clip: ClipInfo): number {
   return clip.startTime + getClipDuration(clip)
 }
 
+function findNextClipOnTrack(clips: ClipInfo[], clip: ClipInfo): ClipInfo | null {
+  const clipEnd = getClipEnd(clip)
+  let next: ClipInfo | null = null
+
+  for (const candidate of clips) {
+    if (candidate.origIdx === clip.origIdx || candidate.trackIndex !== clip.trackIndex || candidate.type === 'audio') continue
+    if (candidate.startTime < clipEnd) continue
+    if (!next || candidate.startTime < next.startTime) next = candidate
+  }
+
+  return next
+}
+
+function getClipDisplayEnd(clip: ClipInfo, clips: ClipInfo[], fps: number): number {
+  const clipEnd = getClipEnd(clip)
+  const next = findNextClipOnTrack(clips, clip)
+  if (!next || fps <= 0) return clipEnd
+  if (next.transitionIn && next.transitionIn.type !== 'cut') return clipEnd
+
+  const gapMs = next.startTime - clipEnd
+  const frameMs = 1000 / fps
+  if (gapMs < 0 || gapMs > frameMs + 0.01) return clipEnd
+  return next.startTime + frameMs
+}
+
+function overlayEnable(startSec: string, endSec: string): string {
+  return `enable='gte(t,${startSec})*lt(t,${endSec})'`
+}
+
 function findOutgoingTransitionClip(clips: ClipInfo[], incoming: ClipInfo): ClipInfo | null {
   return clips.find((candidate) =>
     candidate.origIdx !== incoming.origIdx &&
@@ -284,9 +313,12 @@ async function exportNativeVideo(
     for (let vi = 0; vi < videoClips.length; vi++) {
       const clip = videoClips[vi]
       const ss = (clip.startTime / 1000).toFixed(6)
-      const es = ((clip.startTime + clip.trimEnd - clip.trimStart) / 1000).toFixed(6)
       const ts = (clip.trimStart / 1000).toFixed(6)
       const dur = ((clip.trimEnd - clip.trimStart) / 1000).toFixed(6)
+      const displayEndMs = getClipDisplayEnd(clip, videoClips, fps)
+      const displayEnd = (displayEndMs / 1000).toFixed(6)
+      const displayDur = ((displayEndMs - clip.startTime) / 1000).toFixed(6)
+      const bridgePad = Math.max(0, displayEndMs - getClipEnd(clip)) / 1000
       const transition = isNativeTransition(clip)
         ? clip.transitionIn
         : null
@@ -372,13 +404,13 @@ async function exportNativeVideo(
 
       if (clip.type === 'solid') {
         const fadeIn = clipExtraFilters.length > 0 ? `,format=rgba,${clipExtraFilters.join(',')}` : ''
-        parts.push(`color=c=${clip.color ?? '#000000'}:s=${W}x${H}:r=${fps}:d=${dur},setpts=PTS-STARTPTS+${ss}/TB${fadeIn}[${vLbl}]`)
+        parts.push(`color=c=${clip.color ?? '#000000'}:s=${W}x${H}:r=${fps}:d=${displayDur},setpts=PTS-STARTPTS+${ss}/TB${fadeIn}[${vLbl}]`)
         hasOpacity = clipForceAlpha
       } else {
         const i = inputOf.get(clip.origIdx)!
         const src = clip.type === 'image'
-          ? `[${i}:v]trim=duration=${dur},setpts=PTS-STARTPTS+${ss}/TB,`
-          : `[${i}:v]trim=start=${ts}:duration=${dur},setpts=PTS-STARTPTS+${ss}/TB,`
+          ? `[${i}:v]trim=duration=${displayDur},setpts=PTS-STARTPTS+${ss}/TB,`
+          : `[${i}:v]trim=start=${ts}:duration=${dur},setpts=PTS-STARTPTS+${ss}/TB,${bridgePad > 0 ? `tpad=stop_mode=clone:stop_duration=${bridgePad.toFixed(6)},` : ''}`
 
         const { filter, overlayX: ox, overlayY: oy, hasOpacity: hop } = buildClipFilter(
           src,
@@ -399,7 +431,7 @@ async function exportNativeVideo(
       }
 
       const ovFmt = hasOpacity ? ':format=auto' : ''
-      parts.push(`[${baseLabel}][${vLbl}]overlay=x=${overlayX}:y=${overlayY}:enable='between(t,${ss},${es})':eof_action=pass${ovFmt}[${outLbl}]`)
+      parts.push(`[${baseLabel}][${vLbl}]overlay=x=${overlayX}:y=${overlayY}:${overlayEnable(ss, displayEnd)}:eof_action=pass${ovFmt}[${outLbl}]`)
       baseLabel = outLbl
     }
 

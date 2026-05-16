@@ -11,6 +11,7 @@ import type {
   Tool,
   Transform,
   Transition,
+  PreviewQuality,
 } from '../types'
 import { DEFAULT_ANIMATION, DEFAULT_EFFECTS, DEFAULT_TRANSFORM, DEFAULT_TRANSITION } from '../types'
 import type { EditableDocumentState } from '../editor-core/commands'
@@ -65,6 +66,8 @@ interface EditorStore {
   isPlaying: boolean
   setIsPlaying: (v: boolean) => void
   duration: number
+  previewQuality: PreviewQuality
+  setPreviewQuality: (quality: PreviewQuality) => void
 
   // Selection
   selectedId: string | null
@@ -281,6 +284,11 @@ export const useEditorStore = create<EditorStore>((set, get) => {
       if (get().isPlaying !== v) set({ isPlaying: v })
     },
     duration: 0,
+    previewQuality: (localStorage.getItem('previewQuality') as PreviewQuality | null) ?? 'auto',
+    setPreviewQuality: (previewQuality) => {
+      localStorage.setItem('previewQuality', previewQuality)
+      set({ previewQuality })
+    },
 
     selectedId: null,
     setSelectedId: (id) => set({ selectedId: id }),
