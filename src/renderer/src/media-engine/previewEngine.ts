@@ -5,6 +5,7 @@ import {
 } from '../editor-core/renderPlan'
 import type { MediaClip, TextOverlay, TimelineItem } from '../types'
 import { createCanvasPreviewRenderer } from './canvasPreviewRenderer'
+import { createGpuPreviewRenderer } from './gpuPreviewRenderer'
 import { createPreviewAudioController } from './previewAudioController'
 import { createTimelinePlaybackClock } from './timelinePlaybackClock'
 
@@ -49,8 +50,26 @@ function mediaSignature(parts: PreviewPlanParts) {
   return `${clipSignature}::${itemSignature}`
 }
 
+function gpuPreviewEnabled(): boolean {
+  try {
+    return localStorage.getItem('canCut.gpuPreview') === '1'
+  } catch {
+    return false
+  }
+}
+
+function createPreviewRenderer(canvas: HTMLCanvasElement, width: number, height: number) {
+  if (gpuPreviewEnabled()) {
+    const gpuRenderer = createGpuPreviewRenderer(canvas, width, height)
+    if (gpuRenderer) return gpuRenderer
+    console.warn('GPU preview requested but unavailable; falling back to canvas preview')
+  }
+
+  return createCanvasPreviewRenderer(canvas, width, height)
+}
+
 export function createPreviewEngine(options: PreviewEngineOptions): PreviewEngine {
-  const renderer = createCanvasPreviewRenderer(options.canvas, options.width, options.height)
+  const renderer = createPreviewRenderer(options.canvas, options.width, options.height)
   const audio = createPreviewAudioController()
   let currentPlan: RenderPlan | null = null
   let currentParts: PreviewPlanParts | null = null
