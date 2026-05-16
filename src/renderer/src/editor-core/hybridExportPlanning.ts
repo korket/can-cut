@@ -99,6 +99,48 @@ function mergeSegments(segments: HybridExportSegment[]): HybridExportSegment[] {
   return merged.map((segment, index) => ({ ...segment, index }))
 }
 
+function mergeReason(a: string | undefined, b: string | undefined): string | undefined {
+  if (!a) return b
+  if (!b || a === b) return a
+  return `${a}; ${b}`
+}
+
+function mergeTwoSegments(a: HybridExportSegment, b: HybridExportSegment): HybridExportSegment {
+  const backend: SegmentRenderBackend = a.backend === 'renderer-canvas' || b.backend === 'renderer-canvas'
+    ? 'renderer-canvas'
+    : 'ffmpeg-native'
+  const startMs = Math.min(a.startMs, b.startMs)
+  const endMs = Math.max(a.endMs, b.endMs)
+
+  return {
+    index: Math.min(a.index, b.index),
+    backend,
+    startMs,
+    endMs,
+    durationMs: endMs - startMs,
+    reason: mergeReason(a.reason, b.reason),
+  }
+}
+
+function mergeSubFrameSegments(segments: HybridExportSegment[], fps: number): HybridExportSegment[] {
+  const minDurationMs = fps > 0 ? 1000 / fps : 0
+  if (segments.length <= 1 || minDurationMs <= 0) return segments
+
+  const merged = [...segments]
+  let shortIndex = merged.findIndex((segment) => segment.durationMs > 0 && segment.durationMs < minDurationMs)
+
+  while (shortIndex !== -1 && merged.length > 1) {
+    const neighborIndex = shortIndex === 0 ? 1 : shortIndex - 1
+    const firstIndex = Math.min(shortIndex, neighborIndex)
+    const secondIndex = Math.max(shortIndex, neighborIndex)
+    const combined = mergeTwoSegments(merged[firstIndex], merged[secondIndex])
+    merged.splice(firstIndex, 2, combined)
+    shortIndex = merged.findIndex((segment) => segment.durationMs > 0 && segment.durationMs < minDurationMs)
+  }
+
+  return mergeSegments(merged)
+}
+
 export function planHybridExportSegments(plan: RenderPlan): HybridExportSegment[] {
   const durationMs = Math.max(0, plan.durationMs)
   if (durationMs <= 0) return []
@@ -143,7 +185,7 @@ export function planHybridExportSegments(plan: RenderPlan): HybridExportSegment[
     })
   }
 
-  return mergeSegments(segments)
+  return mergeSubFrameSegments(mergeSegments(segments), plan.fps)
 }
 
 function overlapsRange(startMs: number, endMs: number, rangeStartMs: number, rangeEndMs: number): boolean {

@@ -63,6 +63,8 @@ export interface ExportJobServiceHost {
 
 const MAX_PERSISTED_JOBS = 30
 const MAX_PERSISTED_LOGS = 120
+const MAX_RENDER_CACHE_FILES = 120
+const MAX_RENDER_CACHE_BYTES = 4 * 1024 * 1024 * 1024
 const INTERRUPTED_EXPORT_MESSAGE = 'Export was interrupted before it finished.'
 
 function exportBackendMode(backend: RenderBackend): ExportJobMode {
@@ -189,6 +191,42 @@ function runFfmpeg(args: string[], onLog: (message: string) => void, registerPro
   })
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+}
+
+function asNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string') {
+    const parsed = Number(value)
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return null
+}
+
+function getProbeStreams(probe: unknown): Record<string, unknown>[] {
+  const record = asRecord(probe)
+  const streams = record?.streams
+  return Array.isArray(streams) ? streams.flatMap((stream) => asRecord(stream) ?? []) : []
+}
+
+function getProbeDurationMs(probe: unknown): number | null {
+  const record = asRecord(probe)
+  const format = asRecord(record?.format)
+  const durationSec = asNumber(format?.duration)
+  return durationSec == null ? null : durationSec * 1000
+}
+
+function describeProbeVideo(stream: Record<string, unknown> | undefined): string {
+  if (!stream) return 'no video'
+  const codec = typeof stream.codec_name === 'string' ? stream.codec_name : 'video'
+  const width = asNumber(stream.width)
+  const height = asNumber(stream.height)
+  return width && height ? `${codec} ${width}x${height}` : codec
+}
+
 async function copyFileAtomic(sourcePath: string, targetPath: string): Promise<void> {
   await fs.mkdir(dirname(targetPath), { recursive: true })
   const tempPath = `${targetPath}.${process.pid}.${randomUUID()}.tmp`
@@ -276,8 +314,12 @@ export class ExportJobService {
 
   constructor(private readonly host: ExportJobServiceHost) {}
 
+  private getRenderCacheDir(): string {
+    return join(dirname(this.host.storagePath), 'render-cache')
+  }
+
   private getRenderCachePath(cacheKey: string): string {
-    return join(dirname(this.host.storagePath), 'render-cache', `${hashCacheKey(cacheKey)}.mp4`)
+    return join(this.getRenderCacheDir(), `${hashCacheKey(cacheKey)}.mp4`)
   }
 
   async restore(): Promise<void> {
@@ -474,6 +516,8 @@ export class ExportJobService {
         if (!cachedResult && result.success) await this.storeRenderCache(entry, result)
       }
 
+      if (result.success && result.path) await this.logOutputProbe(entry, result.path, request)
+
       job.timing.exportMs = nowMs() - exportStart
       this.settle(entry, result)
     } catch (err: unknown) {
@@ -542,6 +586,37 @@ export class ExportJobService {
       ok: !issues.some((issue) => issue.severity === 'error'),
       checkedAt: nowMs(),
       issues,
+    }
+  }
+
+  private async logOutputProbe(entry: ManagedExportJob, outputPath: string, request: ExportJobStartRequest): Promise<void> {
+    try {
+      const [stat, probe] = await Promise.all([
+        fs.stat(outputPath),
+        this.host.engine.ffprobe(outputPath),
+      ])
+      const streams = getProbeStreams(probe)
+      const videoStreams = streams.filter((stream) => stream.codec_type === 'video')
+      const audioStreams = streams.filter((stream) => stream.codec_type === 'audio')
+      const durationMs = getProbeDurationMs(probe)
+      const durationText = durationMs == null ? 'unknown duration' : formatDurationMs(durationMs)
+      const videoText = describeProbeVideo(videoStreams[0])
+
+      this.addLog(entry, `Output probe: ${videoText}, ${audioStreams.length} audio stream${audioStreams.length === 1 ? '' : 's'}, ${durationText}, ${formatBytes(stat.size)}`)
+
+      if (videoStreams.length === 0) {
+        this.addLog(entry, 'Output probe warning: exported file has no video stream.')
+      }
+
+      if (durationMs != null) {
+        const frameMs = 1000 / request.preflight.fps
+        const driftMs = Math.abs(durationMs - request.preflight.durationMs)
+        if (driftMs > frameMs * 2) {
+          this.addLog(entry, `Output probe warning: duration differs by ${formatDurationMs(driftMs)} from timeline.`)
+        }
+      }
+    } catch (error: unknown) {
+      this.addLog(entry, `Output probe failed: ${String(error)}`)
     }
   }
 
@@ -815,8 +890,43 @@ export class ExportJobService {
     try {
       await copyFileAtomic(sourcePath, this.getRenderCachePath(cacheKey))
       this.addLog(entry, `Stored render cache: ${cacheKey}`)
+      await this.pruneRenderCache(entry)
     } catch (error: unknown) {
       this.addLog(entry, `Render cache store failed: ${String(error)}`)
+    }
+  }
+
+  private async pruneRenderCache(entry: ManagedExportJob): Promise<void> {
+    try {
+      const cacheDir = this.getRenderCacheDir()
+      const entries = await fs.readdir(cacheDir, { withFileTypes: true })
+      const files = await Promise.all(entries
+        .filter((dirent) => dirent.isFile() && dirent.name.endsWith('.mp4'))
+        .map(async (dirent) => {
+          const path = join(cacheDir, dirent.name)
+          const stat = await fs.stat(path)
+          return { path, size: stat.size, mtimeMs: stat.mtimeMs }
+        }))
+
+      files.sort((a, b) => b.mtimeMs - a.mtimeMs)
+      let totalBytes = files.reduce((sum, file) => sum + file.size, 0)
+      let removedCount = 0
+      let removedBytes = 0
+
+      for (let index = files.length - 1; index >= 0; index--) {
+        if (files.length - removedCount <= MAX_RENDER_CACHE_FILES && totalBytes <= MAX_RENDER_CACHE_BYTES) break
+        const file = files[index]
+        await fs.rm(file.path, { force: true })
+        totalBytes -= file.size
+        removedBytes += file.size
+        removedCount++
+      }
+
+      if (removedCount > 0) {
+        this.addLog(entry, `Pruned render cache: ${removedCount} files, ${formatBytes(removedBytes)}`)
+      }
+    } catch {
+      // Cache cleanup should never affect export success.
     }
   }
 

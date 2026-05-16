@@ -8,6 +8,14 @@ export interface ExportPreflightWarning {
   message: string
 }
 
+export interface ExportHybridDiagnostics {
+  segmentCount: number
+  nativeSegmentCount: number
+  rendererSegmentCount: number
+  nativeDurationMs: number
+  rendererDurationMs: number
+}
+
 export interface ExportPreflight {
   backend: RenderBackend
   backendReason?: string
@@ -23,7 +31,39 @@ export interface ExportPreflight {
   textLayerCount: number
   pixelCountPerFrame: number
   totalPixelCount: number
+  hybridDiagnostics?: ExportHybridDiagnostics
   warnings: ExportPreflightWarning[]
+}
+
+function formatSeconds(ms: number): string {
+  return `${(ms / 1000).toFixed(1)}s`
+}
+
+function createHybridDiagnostics(segments: ReturnType<typeof planHybridExportSegments>): ExportHybridDiagnostics | undefined {
+  if (segments.length === 0) return undefined
+
+  let nativeSegmentCount = 0
+  let rendererSegmentCount = 0
+  let nativeDurationMs = 0
+  let rendererDurationMs = 0
+
+  for (const segment of segments) {
+    if (segment.backend === 'ffmpeg-native') {
+      nativeSegmentCount++
+      nativeDurationMs += segment.durationMs
+    } else {
+      rendererSegmentCount++
+      rendererDurationMs += segment.durationMs
+    }
+  }
+
+  return {
+    segmentCount: segments.length,
+    nativeSegmentCount,
+    rendererSegmentCount,
+    nativeDurationMs,
+    rendererDurationMs,
+  }
 }
 
 function createWarnings(plan: RenderPlan, profile: ExportProfile, backend: RenderBackend, backendReason: string | undefined, frameCount: number): ExportPreflightWarning[] {
@@ -66,10 +106,16 @@ export function buildExportPreflight(plan: RenderPlan, profile: ExportProfile): 
   const hybridSegments = wholeBackendPlan.backend === 'renderer-canvas'
     ? planHybridExportSegments(plan)
     : []
+  const hybridDiagnostics = createHybridDiagnostics(hybridSegments)
   const hasNativeSegment = hybridSegments.some((segment) => segment.backend === 'ffmpeg-native')
   const hasRendererSegment = hybridSegments.some((segment) => segment.backend === 'renderer-canvas')
   const backendPlan = hasNativeSegment && hasRendererSegment
-    ? { backend: 'hybrid' as const, reason: `${hybridSegments.length} export segments: FFmpeg for simple ranges, renderer for complex ranges.` }
+    ? {
+      backend: 'hybrid' as const,
+      reason: hybridDiagnostics
+        ? `${hybridDiagnostics.segmentCount} segments: ${formatSeconds(hybridDiagnostics.nativeDurationMs)} FFmpeg, ${formatSeconds(hybridDiagnostics.rendererDurationMs)} renderer.`
+        : `${hybridSegments.length} export segments: FFmpeg for simple ranges, renderer for complex ranges.`,
+    }
     : wholeBackendPlan
   const frameCount = Math.max(0, Math.ceil((plan.durationMs / 1000) * plan.fps))
   const pixelCountPerFrame = plan.resolution.width * plan.resolution.height
@@ -89,6 +135,7 @@ export function buildExportPreflight(plan: RenderPlan, profile: ExportProfile): 
     textLayerCount: plan.textLayers.length,
     pixelCountPerFrame,
     totalPixelCount: pixelCountPerFrame * frameCount,
+    hybridDiagnostics,
     warnings: createWarnings(plan, profile, backendPlan.backend, backendPlan.reason, frameCount),
   }
 }

@@ -27,7 +27,16 @@ export interface ExportPreflightSnapshot {
   textLayerCount: number
   pixelCountPerFrame: number
   totalPixelCount: number
+  hybridDiagnostics?: ExportHybridDiagnosticsSnapshot
   warnings: Array<{ code: string; message: string }>
+}
+
+export interface ExportHybridDiagnosticsSnapshot {
+  segmentCount: number
+  nativeSegmentCount: number
+  rendererSegmentCount: number
+  nativeDurationMs: number
+  rendererDurationMs: number
 }
 
 export type ExportValidationSeverity = 'error' | 'warning'
@@ -383,6 +392,17 @@ function isWarning(value: unknown): value is ExportPreflightSnapshot['warnings']
   return isString(value.code) && isString(value.message)
 }
 
+function isHybridDiagnostics(value: unknown): value is ExportHybridDiagnosticsSnapshot {
+  if (!isObject(value)) return false
+  return (
+    isNonNegativeNumber(value.segmentCount) &&
+    isNonNegativeNumber(value.nativeSegmentCount) &&
+    isNonNegativeNumber(value.rendererSegmentCount) &&
+    isNonNegativeNumber(value.nativeDurationMs) &&
+    isNonNegativeNumber(value.rendererDurationMs)
+  )
+}
+
 function isPreflightSnapshot(value: unknown): value is ExportPreflightSnapshot {
   if (!isObject(value) || !isObject(value.resolution)) return false
   return (
@@ -401,6 +421,7 @@ function isPreflightSnapshot(value: unknown): value is ExportPreflightSnapshot {
     isNonNegativeNumber(value.textLayerCount) &&
     isPositiveNumber(value.pixelCountPerFrame) &&
     isPositiveNumber(value.totalPixelCount) &&
+    (value.hybridDiagnostics == null || isHybridDiagnostics(value.hybridDiagnostics)) &&
     Array.isArray(value.warnings) &&
     value.warnings.every(isWarning)
   )

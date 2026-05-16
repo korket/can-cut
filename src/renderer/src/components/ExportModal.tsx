@@ -119,6 +119,8 @@ export default function ExportModal({ onClose }: Props) {
   const selectedLogs = selectedJob?.logs.slice(-8) ?? []
   const selectedIssues = selectedJob?.validation?.issues ?? []
   const selectedTiming = selectedJob?.timing
+  const hybridDiagnostics = currentPreflight.hybridDiagnostics
+  const selectedHybridDiagnostics = selectedJob?.preflight.hybridDiagnostics
   const selectedJobActive = selectedJob ? !isTerminalExportStatus(selectedJob.status) : false
   const hasActiveJob = jobs.some((job) => !isTerminalExportStatus(job.status))
   const backendDetail = currentPreflight.backend === 'ffmpeg-native'
@@ -266,6 +268,18 @@ export default function ExportModal({ onClose }: Props) {
             <span style={styles.preflightLabel}>Frame Pipe</span>
             <span style={styles.preflightValue}>{currentPreflight.backend === 'ffmpeg-native' ? 'Not used' : currentPreflight.backend === 'hybrid' ? 'Mixed per segment' : currentPreflight.framePipeFormat === 'raw-rgba' ? 'Raw RGBA' : 'MJPEG'}</span>
           </div>
+          {hybridDiagnostics && currentPreflight.backend === 'hybrid' && (
+            <>
+              <div style={styles.preflightRow}>
+                <span style={styles.preflightLabel}>Hybrid Segments</span>
+                <span style={styles.preflightValue}>{hybridDiagnostics.segmentCount} total, {hybridDiagnostics.nativeSegmentCount} fast, {hybridDiagnostics.rendererSegmentCount} render</span>
+              </div>
+              <div style={styles.preflightRow}>
+                <span style={styles.preflightLabel}>Hybrid Split</span>
+                <span style={styles.preflightValue}>{formatDuration(hybridDiagnostics.nativeDurationMs)} fast, {formatDuration(hybridDiagnostics.rendererDurationMs)} render</span>
+              </div>
+            </>
+          )}
           {currentPreflight.warnings.length > 0 && (
             <div style={styles.warningList}>
               {currentPreflight.warnings.map((warning) => (
@@ -335,6 +349,18 @@ export default function ExportModal({ onClose }: Props) {
               <span style={styles.preflightLabel}>Throughput</span>
               <span style={styles.preflightValue}>{selectedTiming.effectiveFps ? `${selectedTiming.effectiveFps.toFixed(1)} fps` : '-'}</span>
             </div>
+            {selectedHybridDiagnostics && selectedJob.backend === 'hybrid' && (
+              <>
+                <div style={styles.preflightRow}>
+                  <span style={styles.preflightLabel}>Segments</span>
+                  <span style={styles.preflightValue}>{selectedHybridDiagnostics.segmentCount} total, {selectedHybridDiagnostics.nativeSegmentCount} fast, {selectedHybridDiagnostics.rendererSegmentCount} render</span>
+                </div>
+                <div style={styles.preflightRow}>
+                  <span style={styles.preflightLabel}>Segment Split</span>
+                  <span style={styles.preflightValue}>{formatDuration(selectedHybridDiagnostics.nativeDurationMs)} fast, {formatDuration(selectedHybridDiagnostics.rendererDurationMs)} render</span>
+                </div>
+              </>
+            )}
           </div>
         )}
 
