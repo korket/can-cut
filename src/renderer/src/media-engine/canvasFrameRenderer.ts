@@ -1,6 +1,6 @@
 import { evaluateClipAtTime, evaluateTextOverlayAtTime, evaluateTransition } from '../editor-core/evaluation'
 import { getClipSourceTimeMs, getItemDuration, getItemEnd, isItemActiveAt } from '../editor-core/timeline'
-import type { TimelineItem, MediaClip, TextOverlay, Transform, Effects, CompositeMode } from '../types'
+import type { TimelineItem, MediaClip, TextOverlay, Transform, Effects, CompositeMode, Transition } from '../types'
 import type { LoadedCanvasMedia } from './mediaElementLoader'
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -466,6 +466,51 @@ function isTextOverlayActiveAt(overlay: TextOverlay, timeMs: number): boolean {
   return timeMs >= overlay.startTime && timeMs < overlay.endTime
 }
 
+interface TransitionRenderState {
+  transition: Transition
+  outItem: TimelineItem
+  outClip: MediaClip
+  progress: number
+  incomingClipTime: number
+}
+
+function findOutgoingTransitionItem(item: TimelineItem, timelineItems: TimelineItem[]): TimelineItem | null {
+  return timelineItems.find(i =>
+    i.trackIndex === item.trackIndex && i.id !== item.id &&
+    Math.abs(getItemEnd(i) - item.startTime) < 500
+  ) ?? null
+}
+
+function getTransitionRenderState(
+  item: TimelineItem,
+  timeMs: number,
+  timelineItems: TimelineItem[],
+  clips: MediaClip[]
+): TransitionRenderState | null {
+  const transition = item.transitionIn
+  if (!transition || transition.type === 'cut' || transition.duration <= 0) return null
+
+  const outItem = findOutgoingTransitionItem(item, timelineItems)
+  const outClip = outItem ? clips.find(c => c.id === outItem.clipId) : null
+  if (!outItem || !outClip || outClip.type === 'audio') return null
+
+  const outEnd = getItemEnd(outItem)
+  // Treat tiny edit-point gaps as part of the transition so export does not flash black.
+  const transitionStart = Math.min(item.startTime, outEnd)
+  const transitionEnd = item.startTime + transition.duration
+  if (timeMs < transitionStart || timeMs >= transitionEnd) return null
+  const effectiveDuration = transitionEnd - transitionStart
+  if (effectiveDuration <= 0) return null
+
+  return {
+    transition,
+    outItem,
+    outClip,
+    progress: clamp01((timeMs - transitionStart) / effectiveDuration),
+    incomingClipTime: Math.max(0, timeMs - item.startTime),
+  }
+}
+
 const CSS_GENERIC_FONT_FAMILIES = new Set([
   'serif',
   'sans-serif',
@@ -662,7 +707,10 @@ export async function renderCanvasFrame(
   const mediaLayers = timelineItems
     .filter(item => {
       const c = clips.find(cl => cl.id === item.clipId)
-      return c && c.type !== 'audio' && isItemActiveAt(item, timeMs)
+      return c && c.type !== 'audio' && (
+        isItemActiveAt(item, timeMs) ||
+        getTransitionRenderState(item, timeMs, timelineItems, clips) !== null
+      )
     })
     .map(item => ({ kind: 'media' as const, trackIndex: item.trackIndex, startTime: item.startTime, item }))
 
@@ -684,64 +732,56 @@ export async function renderCanvasFrame(
     const clipTime = timeMs - item.startTime
 
     // ── Transition: find outgoing item and render it first ──────────────────
-    const trans = item.transitionIn
-    if (trans && trans.type !== 'cut' && clipTime < trans.duration) {
-      const progress = clipTime / trans.duration
-      const outItem  = timelineItems.find(i =>
-        i.trackIndex === item.trackIndex && i.id !== item.id &&
-        Math.abs(getItemEnd(i) - item.startTime) < 500
-      )
-      const outClip = outItem ? clips.find(c => c.id === outItem.clipId) : null
+    const transitionState = getTransitionRenderState(item, timeMs, timelineItems, clips)
+    if (transitionState) {
+      const { transition: trans, outItem, outClip, progress, incomingClipTime } = transitionState
+      const outClipTime = getFrozenOutgoingClipTime(outItem, outClip)
+      const transition = evaluateTransition(trans, progress)
 
-      if (outItem && outClip && outClip.type !== 'audio') {
-        const outClipTime = getFrozenOutgoingClipTime(outItem, outClip)  // frozen at last displayable frame
-        const transition = evaluateTransition(trans, progress)
+      switch (trans.type) {
+        case 'crossfade':
+          await drawLayer(ctx, W, H, outItem, outClip, outClipTime, videoEls, imageEls, transition.outOpacity ?? 1, undefined, options)
+          await drawLayer(ctx, W, H, item,    clip,    incomingClipTime, videoEls, imageEls, transition.inOpacity ?? 1, undefined, options)
+          break
 
-        switch (trans.type) {
-          case 'crossfade':
-            await drawLayer(ctx, W, H, outItem, outClip, outClipTime, videoEls, imageEls, transition.outOpacity ?? 1, undefined, options)
-            await drawLayer(ctx, W, H, item,    clip,    clipTime,    videoEls, imageEls, transition.inOpacity ?? 1, undefined, options)
-            break
-
-          case 'fade-color': {
-            await drawLayer(ctx, W, H, outItem, outClip, outClipTime, videoEls, imageEls, transition.outOpacity ?? 1, undefined, options)
-            if (transition.overlayOpacity > 0) {
-              ctx.save()
-              ctx.globalAlpha = transition.overlayOpacity
-              ctx.fillStyle = trans.color
-              ctx.fillRect(0, 0, W, H)
-              ctx.restore()
-            }
-            await drawLayer(ctx, W, H, item, clip, clipTime, videoEls, imageEls, transition.inOpacity ?? 1, undefined, options)
-            break
+        case 'fade-color': {
+          await drawLayer(ctx, W, H, outItem, outClip, outClipTime, videoEls, imageEls, transition.outOpacity ?? 1, undefined, options)
+          if (transition.overlayOpacity > 0) {
+            ctx.save()
+            ctx.globalAlpha = transition.overlayOpacity
+            ctx.fillStyle = trans.color
+            ctx.fillRect(0, 0, W, H)
+            ctx.restore()
           }
-
-          case 'wipe-left':
-            await drawLayer(ctx, W, H, outItem, outClip, outClipTime, videoEls, imageEls, 1, undefined, options)
-            await drawLayer(ctx, W, H, item, clip, clipTime, videoEls, imageEls, 1,
-              { right: 1 - progress }, options)
-            break
-
-          case 'wipe-right':
-            await drawLayer(ctx, W, H, outItem, outClip, outClipTime, videoEls, imageEls, 1, undefined, options)
-            await drawLayer(ctx, W, H, item, clip, clipTime, videoEls, imageEls, 1,
-              { left: 1 - progress }, options)
-            break
-
-          case 'wipe-up':
-            await drawLayer(ctx, W, H, outItem, outClip, outClipTime, videoEls, imageEls, 1, undefined, options)
-            await drawLayer(ctx, W, H, item, clip, clipTime, videoEls, imageEls, 1,
-              { bottom: 1 - progress }, options)
-            break
-
-          case 'wipe-down':
-            await drawLayer(ctx, W, H, outItem, outClip, outClipTime, videoEls, imageEls, 1, undefined, options)
-            await drawLayer(ctx, W, H, item, clip, clipTime, videoEls, imageEls, 1,
-              { top: 1 - progress }, options)
-            break
+          await drawLayer(ctx, W, H, item, clip, incomingClipTime, videoEls, imageEls, transition.inOpacity ?? 1, undefined, options)
+          break
         }
-        continue
+
+        case 'wipe-left':
+          await drawLayer(ctx, W, H, outItem, outClip, outClipTime, videoEls, imageEls, 1, undefined, options)
+          await drawLayer(ctx, W, H, item, clip, incomingClipTime, videoEls, imageEls, 1,
+            { right: 1 - progress }, options)
+          break
+
+        case 'wipe-right':
+          await drawLayer(ctx, W, H, outItem, outClip, outClipTime, videoEls, imageEls, 1, undefined, options)
+          await drawLayer(ctx, W, H, item, clip, incomingClipTime, videoEls, imageEls, 1,
+            { left: 1 - progress }, options)
+          break
+
+        case 'wipe-up':
+          await drawLayer(ctx, W, H, outItem, outClip, outClipTime, videoEls, imageEls, 1, undefined, options)
+          await drawLayer(ctx, W, H, item, clip, incomingClipTime, videoEls, imageEls, 1,
+            { bottom: 1 - progress }, options)
+          break
+
+        case 'wipe-down':
+          await drawLayer(ctx, W, H, outItem, outClip, outClipTime, videoEls, imageEls, 1, undefined, options)
+          await drawLayer(ctx, W, H, item, clip, incomingClipTime, videoEls, imageEls, 1,
+            { top: 1 - progress }, options)
+          break
       }
+      continue
     }
 
     await drawLayer(ctx, W, H, item, clip, clipTime, videoEls, imageEls, 1, undefined, options)
