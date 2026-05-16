@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useEditorStore } from '../store/useEditorStore'
 import type { MediaClip, MediaFolder, TimelineItem } from '../types'
+import { toFileUrl } from '../utils/fileUrl'
 import { nanoid } from '../utils/nanoid'
 import { importAndAddClips } from '../utils/importClip'
 
@@ -17,6 +18,14 @@ const SORT_ORDER: SortMode[] = ['name-asc', 'name-desc', 'recent', 'type', 'dura
 
 const TYPE_BADGE: Record<string, string> = {
   video: 'VIDEO', audio: 'AUDIO', image: 'IMG', solid: 'SOLID',
+}
+
+function proxyLabel(clip: MediaClip): string | null {
+  if (clip.type !== 'video' || !clip.proxy) return null
+  if (clip.proxy.status === 'ready') return 'PROXY'
+  if (clip.proxy.status === 'generating' || clip.proxy.status === 'queued') return 'PROXY...'
+  if (clip.proxy.status === 'failed') return 'NO PROXY'
+  return null
 }
 
 const SORT_LABELS: Record<SortMode, string> = {
@@ -134,10 +143,11 @@ function ClipCard({ clip, viewMode, onAdd, onRemove, onCtx, onHoverEnter, onHove
       {clip.type === 'solid'
         ? <div style={{ width: '100%', height: '100%', background: clip.color ?? '#000' }} />
         : clip.thumbnail
-          ? <img src={clip.thumbnail} style={s.thumbImg} alt="" />
+          ? <img src={toFileUrl(clip.thumbnail)} style={s.thumbImg} alt="" />
           : <div style={s.thumbPh}>{clip.type === 'audio' ? '♫' : '▶'}</div>
       }
       <span style={s.badge}>{TYPE_BADGE[clip.type] ?? ''}</span>
+      {proxyLabel(clip) && <span style={{ ...s.proxyBadge, ...(clip.proxy?.status === 'failed' ? s.proxyBadgeFailed : {}) }}>{proxyLabel(clip)}</span>}
       {!small && clip.type !== 'audio' && clip.type !== 'solid' &&
         <span style={s.durBadge}>{formatDuration(clip.duration)}</span>
       }
@@ -636,6 +646,8 @@ const s: Record<string, React.CSSProperties> = {
   thumbImg: { width: '100%', height: '100%', objectFit: 'cover' as const, display: 'block' },
   thumbPh:  { width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, color: '#3a3a3a' },
   badge:    { position: 'absolute' as const, top: 3, left: 3, fontSize: 8, fontWeight: 700, letterSpacing: '0.05em', background: 'rgba(0,0,0,0.6)', color: '#888', padding: '1px 3px', borderRadius: 2 },
+  proxyBadge: { position: 'absolute' as const, top: 3, right: 3, fontSize: 8, fontWeight: 700, letterSpacing: '0.05em', background: 'rgba(42,191,90,0.82)', color: '#07130b', padding: '1px 3px', borderRadius: 2 },
+  proxyBadgeFailed: { background: 'rgba(230,57,80,0.82)', color: '#fff' },
   durBadge: { position: 'absolute' as const, bottom: 3, right: 3, fontSize: 9, color: '#ccc', background: 'rgba(0,0,0,0.65)', padding: '1px 3px', borderRadius: 2 },
   cardName: { fontSize: 10, color: '#777', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, paddingLeft: 1 },
 

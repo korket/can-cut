@@ -28,6 +28,7 @@ interface EditorStore {
   // Media bin
   clips: MediaClip[]
   addClip: (clip: MediaClip) => void
+  updateClip: (id: string, changes: Partial<MediaClip>) => void
   removeClip: (id: string) => void
 
   // Folders
@@ -170,6 +171,9 @@ export const useEditorStore = create<EditorStore>((set, get) => {
   return {
     clips: [],
     addClip: (clip) => commit('Add clip', (s) => ({ clips: [...s.clips, clip] })),
+    updateClip: (id, changes) => set((s) => ({
+      clips: s.clips.map((clip) => clip.id === id ? { ...clip, ...changes } : clip)
+    })),
     removeClip: (id) => commit('Remove clip', (s) => ({ clips: s.clips.filter((c) => c.id !== id) })),
 
     folders: [],

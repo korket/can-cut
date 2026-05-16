@@ -1,11 +1,105 @@
 import { useEditorStore } from '../store/useEditorStore'
-import type { MediaClip } from '../types'
+import type { MediaAnalysis, MediaClip, MediaProxyInfo } from '../types'
+import { toFileUrl } from './fileUrl'
 import { nanoid } from './nanoid'
 
 function evalFPS(str: string | undefined): number {
   if (!str) return 30
   const [n, d] = str.split('/').map(Number)
-  return d ? Math.round(n / d) : 30
+  const fps = d ? n / d : n
+  return Number.isFinite(fps) && fps > 0 ? Math.round(fps) : 30
+}
+
+function probeNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return value
+  if (typeof value === 'string') {
+    const parsed = Number(value)
+    if (Number.isFinite(parsed) && parsed > 0) return parsed
+  }
+  return null
+}
+
+function probeDurationSec(info: any, stream: any): number | null {
+  return probeNumber(info?.format?.duration) ?? probeNumber(stream?.duration)
+}
+
+function fpsMode(stream: any): MediaAnalysis['fpsMode'] {
+  const avg = stream?.avg_frame_rate
+  const real = stream?.r_frame_rate
+  if (!avg || !real || avg === '0/0' || real === '0/0') return 'unknown'
+  return avg === real ? 'constant' : 'variable'
+}
+
+function createMediaAnalysis(info: any, videoStream: any): MediaAnalysis {
+  const audioStream = info.streams?.find((s: any) => s.codec_type === 'audio')
+  const bitrate = probeNumber(info?.format?.bit_rate) ?? undefined
+  const mode = fpsMode(videoStream)
+  const reasons: string[] = []
+  const width = probeNumber(videoStream?.width) ?? 0
+  const height = probeNumber(videoStream?.height) ?? 0
+  const codec = typeof videoStream?.codec_name === 'string' ? videoStream.codec_name : undefined
+
+  if (codec && ['hevc', 'h265', 'av1', 'vp9'].includes(codec.toLowerCase())) reasons.push(`codec ${codec}`)
+  if (width >= 3840 || height >= 2160) reasons.push('4K+ resolution')
+  if (bitrate && bitrate >= 30_000_000) reasons.push('high bitrate')
+  if (mode !== 'constant') reasons.push(`${mode} frame rate`)
+
+  return {
+    videoCodec: codec,
+    audioCodec: typeof audioStream?.codec_name === 'string' ? audioStream.codec_name : undefined,
+    bitrate,
+    fpsMode: mode,
+    needsProxy: reasons.length > 0,
+    proxyReasons: reasons,
+  }
+}
+
+function proxyInfoFromResult(result: MediaProxyResult): MediaProxyInfo {
+  if (result.status === 'ready') {
+    return {
+      status: 'ready',
+      profile: result.profile,
+      path: result.path,
+      width: result.width,
+      height: result.height,
+      fps: result.fps,
+      generatedAt: result.generatedAt,
+    }
+  }
+
+  return {
+    status: 'failed',
+    profile: result.profile,
+    error: result.error,
+    generatedAt: result.generatedAt,
+  }
+}
+
+export function ensureVideoProxyForClip(clip: MediaClip): void {
+  if (clip.type !== 'video') return
+  const { updateClip } = useEditorStore.getState()
+  updateClip(clip.id, {
+    proxy: {
+      status: 'generating',
+      profile: '720p',
+      generatedAt: new Date().toISOString(),
+    },
+  })
+
+  void window.api.ensureVideoProxy({ path: clip.path, profile: '720p' })
+    .then((result) => {
+      useEditorStore.getState().updateClip(clip.id, { proxy: proxyInfoFromResult(result) })
+    })
+    .catch((error: unknown) => {
+      useEditorStore.getState().updateClip(clip.id, {
+        proxy: {
+          status: 'failed',
+          profile: '720p',
+          error: error instanceof Error ? error.message : String(error),
+          generatedAt: new Date().toISOString(),
+        },
+      })
+    })
 }
 
 const VIDEO_EXTS = new Set(['mp4', 'mov', 'avi', 'mkv', 'webm', 'm4v', 'wmv', 'flv'])
@@ -42,31 +136,36 @@ export async function importClip(path: string): Promise<MediaClip | null> {
         height,
         fps: 30,
         type: 'image',
-        thumbnail: `file://${path}`,
+        thumbnail: toFileUrl(path),
         importedAt,
       }
     }
 
     const info = await window.api.getVideoInfo(path)
     const vs = info.streams?.find((s: any) => s.codec_type === 'video')
-    const durationSec = parseFloat(info.format?.duration ?? '0')
+    const durationSec = probeDurationSec(info, vs ?? info.streams?.[0])
+    const durationMs = durationSec ? Math.round(durationSec * 1000) : 5000
 
     const clip: MediaClip = {
       id: nanoid(),
       name,
       path,
-      duration: Math.round(durationSec * 1000),
+      duration: Math.max(1, durationMs),
       width: vs?.width ?? 1920,
       height: vs?.height ?? 1080,
-      fps: vs ? evalFPS(vs.r_frame_rate) : 30,
+      fps: vs ? evalFPS(vs.avg_frame_rate ?? vs.r_frame_rate) : 30,
       type: vs ? 'video' : 'audio',
       importedAt,
+      ...(vs ? {
+        analysis: createMediaAnalysis(info, vs),
+        proxy: { status: 'queued', profile: '720p' as const },
+      } : {}),
     }
 
     if (clip.type === 'video') {
       try {
         const thumb = await window.api.getThumbnail(path, 0)
-        clip.thumbnail = `file://${thumb}`
+        clip.thumbnail = toFileUrl(thumb)
       } catch (_) {}
     }
 
@@ -110,6 +209,7 @@ export async function importAndAddClips(paths: string[], folderId?: string): Pro
       if (clip) {
         if (targetFolderId) clip.folderId = targetFolderId
         addClip(clip)
+        ensureVideoProxyForClip(clip)
         results.push(clip)
       }
     }

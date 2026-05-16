@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { toFileUrl } from '../utils/fileUrl'
 
 interface Props {
   projectId: string
@@ -229,7 +230,7 @@ export default function VersionHistoryModal({
             <div key={version.id} style={styles.row}>
               <div style={styles.thumb}>
                 {version.thumbnail
-                  ? <img src={version.thumbnail} style={styles.thumbImg} />
+                  ? <img src={toFileUrl(version.thumbnail)} style={styles.thumbImg} />
                   : <div style={styles.thumbPlaceholder}>T</div>
                 }
               </div>

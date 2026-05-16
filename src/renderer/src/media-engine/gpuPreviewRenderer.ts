@@ -3,13 +3,22 @@ import { getClipSourceTimeMs, getItemEnd, isItemActiveAt } from '../editor-core/
 import type { CompositeMode, Effects, MediaClip, TextOverlay, TimelineItem, Transform } from '../types'
 import { renderCanvasFrame } from './canvasFrameRenderer'
 import type { CanvasPreviewRenderer } from './canvasPreviewRenderer'
-import { disposeCanvasMedia, loadCanvasMedia, type LoadedCanvasMedia } from './mediaElementLoader'
+import {
+  activeCanvasVideosReady,
+  disposeCanvasMedia,
+  loadCanvasMedia,
+  pauseCanvasVideos,
+  syncCanvasVideoPlayback,
+  type LoadedCanvasMedia,
+} from './mediaElementLoader'
 
 interface PreviewRenderRequest {
   timeMs: number
   timelineItems: TimelineItem[]
   clips: MediaClip[]
   textOverlays: TextOverlay[]
+  playbackActive: boolean
+  generation: number
 }
 
 interface Rect {
@@ -347,18 +356,13 @@ function requiresCanvasFallback(
   )
 }
 
-async function seekTo(video: HTMLVideoElement, timeSec: number, timeoutMs = 90): Promise<void> {
-  const maxSeekTime = Number.isFinite(video.duration) && video.duration > 0
-    ? Math.max(0, video.duration - 0.001)
-    : Number.POSITIVE_INFINITY
-  const target = Math.max(0, Math.min(timeSec, maxSeekTime))
-  if (Math.abs(video.currentTime - target) < 0.001 && video.readyState >= 2) return
-
-  video.currentTime = target
-  await new Promise<void>((resolve) => {
+function waitForVideoFrame(video: HTMLVideoElement, timeSec: number, timeoutMs: number): Promise<void> {
+  return new Promise<void>((resolve) => {
     const cleanup = () => {
       clearTimeout(timeout)
       video.removeEventListener('seeked', done)
+      video.removeEventListener('loadeddata', done)
+      video.removeEventListener('canplay', done)
       video.removeEventListener('error', done)
     }
     const done = () => {
@@ -367,8 +371,25 @@ async function seekTo(video: HTMLVideoElement, timeSec: number, timeoutMs = 90):
     }
     const timeout = setTimeout(done, timeoutMs)
     video.addEventListener('seeked', done, { once: true })
+    video.addEventListener('loadeddata', done, { once: true })
+    video.addEventListener('canplay', done, { once: true })
     video.addEventListener('error', done, { once: true })
   })
+}
+
+async function seekTo(video: HTMLVideoElement, timeSec: number, timeoutMs = 90): Promise<void> {
+  const maxSeekTime = Number.isFinite(video.duration) && video.duration > 0
+    ? Math.max(0, video.duration - 0.001)
+    : Number.POSITIVE_INFINITY
+  const target = Math.max(0, Math.min(timeSec, maxSeekTime))
+  if (Math.abs(video.currentTime - target) < 0.001) {
+    if (video.readyState >= 2) return
+    await waitForVideoFrame(video, target, timeoutMs)
+    return
+  }
+
+  video.currentTime = target
+  await waitForVideoFrame(video, target, timeoutMs)
 }
 
 export function createGpuPreviewRenderer(
@@ -413,6 +434,10 @@ export function createGpuPreviewRenderer(
   let media: LoadedCanvasMedia | null = null
   let renderRequest: PreviewRenderRequest | null = null
   let renderRunning = false
+  let playbackActive = false
+  let playbackTimeMs = 0
+  let playbackTimelineItems: TimelineItem[] = []
+  let renderGeneration = 0
 
   function configureTexture(source: TextureSource): boolean {
     try {
@@ -570,8 +595,14 @@ export function createGpuPreviewRenderer(
     const layers = getActiveGpuLayers(request.timeMs, request.timelineItems, request.clips)
     if (requiresCanvasFallback(request, layers)) return false
 
-    await prepareVideoLayers(layers)
+    if (request.playbackActive) {
+      syncCanvasVideoPlayback(media, request.timeMs, request.timelineItems)
+      if (!activeCanvasVideosReady(media, request.timeMs, request.timelineItems)) return true
+    } else {
+      await prepareVideoLayers(layers)
+    }
     if (disposed) return true
+    if (request.generation !== renderGeneration) return true
 
 
     clear()
@@ -583,6 +614,10 @@ export function createGpuPreviewRenderer(
 
   async function renderCanvasFallback(request: PreviewRenderRequest) {
     if (!media) return
+    const renderOptions = request.playbackActive
+      ? { seekTimeoutMs: 90, realtimeVideoPlayback: true, shouldContinue: () => request.generation === renderGeneration }
+      : { seekTimeoutMs: 120, strictSeek: true, prepareVideoBeforeClear: true, shouldContinue: () => request.generation === renderGeneration }
+
     await renderCanvasFrame(
       backingCtx,
       width,
@@ -592,7 +627,7 @@ export function createGpuPreviewRenderer(
       request.clips,
       request.textOverlays,
       media,
-      { seekTimeoutMs: 90 }
+      renderOptions
     )
     clearGl()
     drawBackingTexture()
@@ -613,6 +648,7 @@ export function createGpuPreviewRenderer(
         }
 
         try {
+          if (request.generation !== renderGeneration) continue
           const renderedWithGpu = await renderGpuFrame(request)
           if (!renderedWithGpu && !disposed) await renderCanvasFallback(request)
         } catch (err) {
@@ -641,21 +677,41 @@ export function createGpuPreviewRenderer(
       }
 
       media = loadedMedia
+      if (playbackActive) syncCanvasVideoPlayback(media, playbackTimeMs, playbackTimelineItems)
       if (renderRequest) void flushRenderQueue()
     },
     render(timeMs: number, timelineItems: TimelineItem[], clips: MediaClip[], textOverlays: TextOverlay[]) {
-      renderRequest = { timeMs, timelineItems, clips, textOverlays }
+      if (playbackActive) {
+        playbackTimeMs = timeMs
+        playbackTimelineItems = timelineItems
+      }
+      renderRequest = { timeMs, timelineItems, clips, textOverlays, playbackActive, generation: renderGeneration }
       if (!media) {
         clear()
         return
       }
       void flushRenderQueue()
     },
+    startPlayback(timeMs: number, timelineItems: TimelineItem[]) {
+      renderGeneration++
+      playbackActive = true
+      playbackTimeMs = timeMs
+      playbackTimelineItems = timelineItems
+      syncCanvasVideoPlayback(media, timeMs, timelineItems)
+    },
+    stopPlayback() {
+      renderGeneration++
+      playbackActive = false
+      pauseCanvasVideos(media)
+    },
     clear,
     dispose() {
       disposed = true
+      playbackActive = false
+      renderGeneration++
       mediaGeneration++
       renderRequest = null
+      pauseCanvasVideos(media)
       disposeCurrentMedia()
       gl.deleteTexture(texture)
       gl.deleteBuffer(positionBuffer)

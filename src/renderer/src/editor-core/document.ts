@@ -63,6 +63,18 @@ function getThumbnail(state: Pick<EditorDocumentState, 'thumbnail' | 'timelineIt
   return clip?.thumbnail ?? null
 }
 
+export function stripTransientClipState(clip: MediaClip): MediaClip {
+  if (!clip.proxy) return clip
+  const cleanClip = { ...clip }
+  delete cleanClip.proxy
+  return cleanClip
+}
+
+function normalizeMediaClips(clips: unknown): MediaClip[] {
+  if (!Array.isArray(clips)) return []
+  return clips.map((clip) => stripTransientClipState(clip as MediaClip))
+}
+
 function normalizeTextOverlays(overlays: unknown, videoTrackCount: number): TextOverlay[] {
   if (!Array.isArray(overlays)) return []
   const defaultTrack = Math.max(0, videoTrackCount - 1)
@@ -112,7 +124,7 @@ export function createProjectDocument(state: EditorDocumentState): ProjectDocume
       zoom: state.zoom,
     },
     media: {
-      clips: state.clips,
+      clips: state.clips.map(stripTransientClipState),
       folders: state.folders,
     },
     timelines: [{
@@ -147,7 +159,7 @@ export function readEditorStateFromProjectData(raw: unknown): EditorDocumentStat
       createdAt: raw.createdAt,
       updatedAt: raw.updatedAt,
       thumbnail: raw.thumbnail ?? null,
-      clips: raw.media.clips ?? [],
+      clips: normalizeMediaClips(raw.media.clips),
       folders: raw.media.folders ?? [],
       timelineItems: timeline.items ?? [],
       textOverlays: normalizeTextOverlays(timeline.textOverlays, videoTrackCount),
@@ -166,7 +178,7 @@ export function readEditorStateFromProjectData(raw: unknown): EditorDocumentStat
     createdAt: legacy?.createdAt,
     updatedAt: legacy?.updatedAt,
     thumbnail: legacy?.thumbnail ?? null,
-    clips: legacy?.clips ?? [],
+    clips: normalizeMediaClips(legacy?.clips),
     folders: legacy?.folders ?? [],
     timelineItems: legacy?.timelineItems ?? [],
     textOverlays: normalizeTextOverlays(legacy?.textOverlays, videoTrackCount),

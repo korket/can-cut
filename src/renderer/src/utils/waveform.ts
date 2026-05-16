@@ -1,3 +1,5 @@
+import { toFileUrl } from './fileUrl'
+
 export interface WaveformChannelData {
   positive: number[]
   negative: number[]
@@ -68,11 +70,9 @@ function isWaveformError(value: unknown): value is { error: string } {
 }
 
 async function generateRendererFallback(path: string): Promise<WaveformData | null> {
-  const normalized = path.replace(/\\/g, '/')
-  const url = /^[a-zA-Z]:/.test(normalized) ? `file:///${normalized}` : `file://${normalized}`
   const ctx = new AudioContext()
   try {
-    const res = await fetch(url)
+    const res = await fetch(toFileUrl(path))
     const buf = await res.arrayBuffer()
     const audio = await ctx.decodeAudioData(buf)
     const channelCount = Math.min(2, audio.numberOfChannels)

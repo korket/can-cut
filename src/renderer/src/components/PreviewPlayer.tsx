@@ -6,10 +6,12 @@ import {
   type RenderPlan,
 } from '../editor-core/renderPlan'
 import { createPreviewEngine, type PreviewEngine } from '../media-engine/previewEngine'
+import { getPreviewSourcePath, withPreviewSources } from '../media-engine/previewSource'
 import { useEditorStore } from '../store/useEditorStore'
 import { useShortcutsStore, matchesShortcut } from '../store/useShortcutsStore'
 import type { TextOverlay, TimelineItem, MediaClip, Transform } from '../types'
 import { DEFAULT_ANIMATION, DEFAULT_EFFECTS, DEFAULT_TRANSFORM } from '../types'
+import { toFileUrl } from '../utils/fileUrl'
 import { formatTimecode, snapToFrame, frameDurationMs } from '../utils/frame'
 import { nanoid } from '../utils/nanoid'
 
@@ -26,7 +28,7 @@ function createPreviewPlanFromState(state: {
     resolution: '1920x1080',
     fps: state.fps,
     timelineItems: state.timelineItems,
-    clips: state.clips,
+    clips: withPreviewSources(state.clips),
     textOverlays: state.textOverlays,
   })
 }
@@ -42,6 +44,7 @@ export default function PreviewPlayer() {
   } = useEditorStore()
 
   const previewEngineRef = useRef<PreviewEngine | null>(null)
+  const isPlayingRef = useRef(isPlaying)
 
   const [transformMode, setTransformMode] = useState(false)
   const [focalMode, setFocalMode] = useState(false)
@@ -196,8 +199,12 @@ export default function PreviewPlayer() {
   }, [renderPlan])
 
   useEffect(() => {
-    if (!isPlaying) previewEngineRef.current?.seek(currentTime)
-  }, [currentTime, isPlaying])
+    isPlayingRef.current = isPlaying
+  }, [isPlaying])
+
+  useEffect(() => {
+    if (!isPlayingRef.current) previewEngineRef.current?.seek(currentTime)
+  }, [currentTime])
 
   useEffect(() => {
     if (!isPlaying) {
@@ -309,14 +316,14 @@ export default function PreviewPlayer() {
               {hoverPreviewClip.type === 'video' && (
                 <video
                   key={hoverPreviewClip.id}
-                  src={`file://${hoverPreviewClip.path}`}
+                  src={toFileUrl(getPreviewSourcePath(hoverPreviewClip))}
                   autoPlay muted loop
                   style={{ width: '100%', height: '100%', objectFit: 'contain' }}
                 />
               )}
               {hoverPreviewClip.type === 'image' && (
                 <img
-                  src={hoverPreviewClip.thumbnail ?? `file://${hoverPreviewClip.path}`}
+                  src={toFileUrl(hoverPreviewClip.thumbnail ?? hoverPreviewClip.path)}
                   alt=""
                   style={{ width: '100%', height: '100%', objectFit: 'contain' }}
                 />

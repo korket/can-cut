@@ -115,15 +115,18 @@ export function createPreviewEngine(options: PreviewEngineOptions): PreviewEngin
         renderer.clear()
         return
       }
+      renderer.stopPlayback()
       renderer.render(timeMs, currentParts.timelineItems, currentParts.clips, currentParts.textOverlays)
     },
     play(timeMs: number) {
       if (!currentParts) return
+      renderer.startPlayback(timeMs, currentParts.timelineItems)
       audio.playActive(timeMs, currentParts.timelineItems)
       clock.play(timeMs)
     },
     pause() {
       clock.pause()
+      renderer.stopPlayback()
       audio.pause()
     },
     dispose() {

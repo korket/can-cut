@@ -8,6 +8,7 @@ import {
 } from './export/jobService'
 import { createMediaAnalysisService, registerMediaAnalysisIpc } from './mediaAnalysis'
 import { registerMediaImportIpc } from './mediaImport'
+import { createMediaProxyService, registerMediaProxyIpc } from './mediaProxy'
 import { createProjectStore, registerProjectIpc } from './projects'
 import { registerSystemFontIpc } from './systemFonts'
 
@@ -190,6 +191,7 @@ const exportEngine = createExportEngine({
 
 const projectStore = createProjectStore(() => join(app.getPath('userData'), 'projects'))
 const mediaAnalysis = createMediaAnalysisService(() => join(app.getPath('userData'), 'media-analysis'))
+const mediaProxy = createMediaProxyService(() => join(app.getPath('userData'), 'media-proxies'))
 
 app.whenReady().then(async () => {
   exportJobs = createExportJobService({
@@ -237,4 +239,5 @@ ipcMain.handle('shell:openPath', (_event, path: string) => shell.openPath(path))
 registerSystemFontIpc(ipcMain)
 registerMediaImportIpc(ipcMain)
 registerMediaAnalysisIpc(ipcMain, mediaAnalysis)
+registerMediaProxyIpc(ipcMain, mediaProxy)
 registerProjectIpc(ipcMain, projectStore)

@@ -79,6 +79,28 @@ type MediaWaveformResult =
   | MediaWaveformData
   | { error: string }
 
+interface MediaProxyReadyResult {
+  status: 'ready'
+  profile: '720p'
+  path: string
+  width: number
+  height: number
+  fps: number
+  sourcePath: string
+  cacheKey: string
+  generatedAt: string
+}
+
+interface MediaProxyFailedResult {
+  status: 'failed'
+  profile: '720p'
+  sourcePath: string
+  error: string
+  generatedAt: string
+}
+
+type MediaProxyResult = MediaProxyReadyResult | MediaProxyFailedResult
+
 interface FrameExportOptions {
   W: number
   H: number
@@ -171,6 +193,7 @@ interface Window {
     validateMediaPaths: (paths: string[]) => Promise<MediaPathValidationResult[]>
     resolveMediaImportPaths: (paths: string[]) => Promise<MediaImportEntry[]>
     getWaveform: (path: string) => Promise<MediaWaveformResult>
+    ensureVideoProxy: (request: { path: string; profile?: '720p' }) => Promise<MediaProxyResult>
     startFrameExport?: (jobId: string, opts: FrameExportOptions) => Promise<FrameExportStartResult>
     sendExportFrame?: (jobId: string, buf: ArrayBuffer) => Promise<FrameExportSendResult>
     finishFrameExport?: (jobId: string) => Promise<FrameExportFinishResult>

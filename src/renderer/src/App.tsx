@@ -8,10 +8,11 @@ import ExportModal from './components/ExportModal'
 import ShortcutsModal from './components/ShortcutsModal'
 import ProjectsScreen from './components/ProjectsScreen'
 import VersionHistoryModal from './components/VersionHistoryModal'
-import { createProjectDocument, readEditorStateFromProjectData } from './editor-core/document'
+import { createProjectDocument, readEditorStateFromProjectData, stripTransientClipState } from './editor-core/document'
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
 import { useEditorStore } from './store/useEditorStore'
 import { useHistoryStore } from './store/useHistoryStore'
+import { ensureVideoProxyForClip } from './utils/importClip'
 
 const AUTOSAVE_DELAY_MS = 1500
 const AUTO_VERSION_INTERVAL_MS = 60_000
@@ -20,7 +21,7 @@ type EditorStateSnapshot = ReturnType<typeof useEditorStore.getState>
 
 function createProjectContentKey(state: EditorStateSnapshot) {
   return JSON.stringify({
-    clips: state.clips,
+    clips: state.clips.map(stripTransientClipState),
     folders: state.folders,
     timelineItems: state.timelineItems,
     textOverlays: state.textOverlays,
@@ -70,6 +71,8 @@ function Editor({ projectId, projectName, projectCreatedAt, onBack, onOpenProjec
   const [showExport,    setShowExport]    = useState(false)
   const [showShortcuts, setShowShortcuts] = useState(false)
   const [showVersions,  setShowVersions]  = useState(false)
+  const clips = useEditorStore(state => state.clips)
+  const queuedProxyClipIds = useRef(new Set<string>())
 
   const [sidebarWidth,    setSidebarWidth]    = useState(() => Number(localStorage.getItem('layout:sidebarWidth'))    || 240)
   const [propertiesWidth, setPropertiesWidth] = useState(() => Number(localStorage.getItem('layout:propertiesWidth')) || 220)
@@ -111,7 +114,7 @@ function Editor({ projectId, projectName, projectCreatedAt, onBack, onOpenProjec
       id: projectId, name: projectName,
       createdAt: projectCreatedAt,
       updatedAt,
-      clips:           state.clips,
+      clips:           state.clips.map(stripTransientClipState),
       folders:         state.folders,
       timelineItems:   state.timelineItems,
       textOverlays:    state.textOverlays,
@@ -183,6 +186,17 @@ function Editor({ projectId, projectName, projectCreatedAt, onBack, onOpenProjec
   }, [getCurrentProjectData, projectId])
 
   useKeyboardShortcuts(() => setShowExport(true))
+
+  useEffect(() => {
+    for (const clip of clips) {
+      if (clip.type !== 'video') continue
+      if (clip.proxy?.status === 'ready' || clip.proxy?.status === 'generating') continue
+      if (queuedProxyClipIds.current.has(clip.id)) continue
+
+      queuedProxyClipIds.current.add(clip.id)
+      ensureVideoProxyForClip(clip)
+    }
+  }, [clips])
 
   return (
     <div style={styles.root}>

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { toFileUrl } from '../utils/fileUrl'
 
 interface Props {
   onOpen: (id: string) => void
@@ -121,7 +122,7 @@ export default function ProjectsScreen({ onOpen }: Props) {
             >
               <div style={styles.thumb}>
                 {proj.thumbnail
-                  ? <img src={proj.thumbnail} style={styles.thumbImg} />
+                  ? <img src={toFileUrl(proj.thumbnail)} style={styles.thumbImg} />
                   : <div style={styles.thumbPlaceholder}><span style={styles.thumbIcon}>▶</span></div>
                 }
                 {/* Delete button */}

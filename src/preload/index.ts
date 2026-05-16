@@ -11,6 +11,7 @@ const appApi = {
   validateMediaPaths: (paths: string[]) => ipcRenderer.invoke('media:validatePaths', paths),
   resolveMediaImportPaths: (paths: string[]) => ipcRenderer.invoke('media:resolveImportPaths', paths),
   getWaveform: (path: string) => ipcRenderer.invoke('media:waveform', path),
+  ensureVideoProxy: (request: unknown) => ipcRenderer.invoke('media:proxy:ensure', request),
   startExportJob:    (request: unknown) => ipcRenderer.invoke('export:jobStart', request),
   getExportJobs:     () => ipcRenderer.invoke('export:jobList'),
   cancelExportJob:   (jobId: string) => ipcRenderer.invoke('export:jobCancel', jobId),

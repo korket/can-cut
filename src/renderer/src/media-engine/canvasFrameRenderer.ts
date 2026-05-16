@@ -90,21 +90,19 @@ function applyBackdropEffect(
 export interface CanvasFrameRenderOptions {
   seekTimeoutMs?: number
   strictSeek?: boolean
+  realtimeVideoPlayback?: boolean
+  prepareVideoBeforeClear?: boolean
+  shouldContinue?: () => boolean
 }
 
-async function seekTo(video: HTMLVideoElement, timeSec: number, options: CanvasFrameRenderOptions = {}): Promise<void> {
+function waitForVideoFrame(video: HTMLVideoElement, timeSec: number, options: CanvasFrameRenderOptions): Promise<void> {
   const timeoutMs = options.seekTimeoutMs ?? 500
-  const maxSeekTime = Number.isFinite(video.duration) && video.duration > 0
-    ? Math.max(0, video.duration - 0.001)
-    : Number.POSITIVE_INFINITY
-  const target = Math.max(0, Math.min(timeSec, maxSeekTime))
-  if (Math.abs(video.currentTime - target) < 0.001 && video.readyState >= 2) return
-
-  video.currentTime = target
-  await new Promise<void>((resolve, reject) => {
+  return new Promise<void>((resolve, reject) => {
     const cleanup = () => {
       clearTimeout(timeout)
       video.removeEventListener('seeked', done)
+      video.removeEventListener('loadeddata', done)
+      video.removeEventListener('canplay', done)
       video.removeEventListener('error', fail)
     }
     const done = () => {
@@ -114,23 +112,39 @@ async function seekTo(video: HTMLVideoElement, timeSec: number, options: CanvasF
     const fail = () => {
       cleanup()
       if (options.strictSeek) {
-        reject(new Error(`Failed seeking video frame at ${target.toFixed(3)}s`))
+        reject(new Error(`Failed seeking video frame at ${timeSec.toFixed(3)}s`))
         return
       }
       resolve()
     }
     const timeout = setTimeout(() => {
-      video.removeEventListener('seeked', done)
-      video.removeEventListener('error', fail)
+      cleanup()
       if (options.strictSeek) {
-        reject(new Error(`Timed out seeking video frame at ${target.toFixed(3)}s`))
+        reject(new Error(`Timed out seeking video frame at ${timeSec.toFixed(3)}s`))
         return
       }
       resolve()
     }, timeoutMs)
     video.addEventListener('seeked', done, { once: true })
+    video.addEventListener('loadeddata', done, { once: true })
+    video.addEventListener('canplay', done, { once: true })
     video.addEventListener('error', fail, { once: true })
   })
+}
+
+async function seekTo(video: HTMLVideoElement, timeSec: number, options: CanvasFrameRenderOptions = {}): Promise<void> {
+  const maxSeekTime = Number.isFinite(video.duration) && video.duration > 0
+    ? Math.max(0, video.duration - 0.001)
+    : Number.POSITIVE_INFINITY
+  const target = Math.max(0, Math.min(timeSec, maxSeekTime))
+  if (Math.abs(video.currentTime - target) < 0.001) {
+    if (video.readyState >= 2) return
+    await waitForVideoFrame(video, target, options)
+    return
+  }
+
+  video.currentTime = target
+  await waitForVideoFrame(video, target, options)
 }
 
 function getFrozenOutgoingClipTime(item: TimelineItem, clip: MediaClip): number {
@@ -400,7 +414,8 @@ async function drawLayer(
 
   if (clip.type === 'video') {
     const v = videoEls.get(item.id)
-    if (v) await seekTo(v, srcTime, options)
+    const canUsePlayingFrame = options.realtimeVideoPlayback && v && !v.paused && v.readyState >= 2
+    if (v && !canUsePlayingFrame) await seekTo(v, srcTime, options)
   }
 
   const { transform: tr, effects: ef, animation } = evaluateClipAtTime(item, clipTime)
@@ -508,6 +523,49 @@ function getTransitionRenderState(
     outClip,
     progress: clamp01((timeMs - transitionStart) / effectiveDuration),
     incomingClipTime: Math.max(0, timeMs - item.startTime),
+  }
+}
+
+async function prepareVideoFrame(
+  item: TimelineItem,
+  clip: MediaClip,
+  clipTime: number,
+  videoEls: Map<string, HTMLVideoElement>,
+  options: CanvasFrameRenderOptions,
+  preparedIds: Set<string>
+) {
+  if (clip.type !== 'video' || preparedIds.has(item.id)) return
+  const video = videoEls.get(item.id)
+  if (!video) return
+  preparedIds.add(item.id)
+  const sourceTime = getClipSourceTimeMs(item, item.startTime + clipTime) / 1000
+  await seekTo(video, sourceTime, options)
+}
+
+async function prepareVideoFramesBeforeClear(
+  timeMs: number,
+  timelineItems: TimelineItem[],
+  clips: MediaClip[],
+  videoEls: Map<string, HTMLVideoElement>,
+  options: CanvasFrameRenderOptions
+) {
+  if (!options.prepareVideoBeforeClear || options.realtimeVideoPlayback) return
+
+  const preparedIds = new Set<string>()
+  for (const item of timelineItems) {
+    const clip = clips.find(c => c.id === item.clipId)
+    if (!clip || clip.type === 'audio') continue
+
+    const transitionState = getTransitionRenderState(item, timeMs, timelineItems, clips)
+    if (transitionState) {
+      await prepareVideoFrame(transitionState.outItem, transitionState.outClip, getFrozenOutgoingClipTime(transitionState.outItem, transitionState.outClip), videoEls, options, preparedIds)
+      await prepareVideoFrame(item, clip, transitionState.incomingClipTime, videoEls, options, preparedIds)
+      continue
+    }
+
+    if (isItemActiveAt(item, timeMs)) {
+      await prepareVideoFrame(item, clip, timeMs - item.startTime, videoEls, options, preparedIds)
+    }
   }
 }
 
@@ -696,6 +754,9 @@ export async function renderCanvasFrame(
   options: CanvasFrameRenderOptions = {}
 ) {
   const { videoEls, imageEls } = media
+
+  await prepareVideoFramesBeforeClear(timeMs, timelineItems, clips, videoEls, options)
+  if (options.shouldContinue && !options.shouldContinue()) return
 
   ctx.setTransform(1, 0, 0, 1, 0, 0)
   ctx.filter = 'none'

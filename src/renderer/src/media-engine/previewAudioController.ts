@@ -1,5 +1,6 @@
 import { getClipSourceTimeMs, isItemActiveAt } from '../editor-core/timeline'
 import type { MediaClip, TimelineItem } from '../types'
+import { toFileUrl } from '../utils/fileUrl'
 
 export interface PreviewAudioController {
   load(timelineItems: TimelineItem[], clips: MediaClip[]): void
@@ -50,7 +51,7 @@ export function createPreviewAudioController(): PreviewAudioController {
         if (!clip || !clipHasPlayableAudio(clip)) continue
 
         liveAudioIds.add(item.id)
-        const src = `file://${clip.path}`
+        const src = toFileUrl(clip.path)
         if (!audioEls.has(item.id)) {
           const el = new Audio()
           el.src = src

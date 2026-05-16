@@ -1,3 +1,23 @@
+export interface MediaAnalysis {
+  videoCodec?: string
+  audioCodec?: string
+  bitrate?: number
+  fpsMode: 'constant' | 'variable' | 'unknown'
+  needsProxy: boolean
+  proxyReasons: string[]
+}
+
+export interface MediaProxyInfo {
+  status: 'queued' | 'generating' | 'ready' | 'failed'
+  profile: '720p'
+  path?: string
+  width?: number
+  height?: number
+  fps?: number
+  error?: string
+  generatedAt?: string
+}
+
 export interface MediaClip {
   id: string
   name: string
@@ -11,6 +31,8 @@ export interface MediaClip {
   folderId?: string | null
   color?: string   // solid color clips only
   importedAt?: string
+  analysis?: MediaAnalysis
+  proxy?: MediaProxyInfo
 }
 
 export interface MediaFolder {
