@@ -16,6 +16,15 @@ function timeAgo(iso: string) {
   return new Date(iso).toLocaleDateString()
 }
 
+function focusAndSelect(input: HTMLInputElement | null) {
+  input?.focus()
+  input?.select()
+}
+
+function selectOnFocus(e: React.FocusEvent<HTMLInputElement>) {
+  e.currentTarget.select()
+}
+
 export default function ProjectsScreen({ onOpen }: Props) {
   const [projects,    setProjects]    = useState<ProjectMeta[]>([])
   const [creating,    setCreating]    = useState(false)
@@ -27,8 +36,8 @@ export default function ProjectsScreen({ onOpen }: Props) {
   const renameInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => { load() }, [])
-  useEffect(() => { if (creating) newInputRef.current?.focus() }, [creating])
-  useEffect(() => { if (renamingId) renameInputRef.current?.focus() }, [renamingId])
+  useEffect(() => { if (creating) focusAndSelect(newInputRef.current) }, [creating])
+  useEffect(() => { if (renamingId) focusAndSelect(renameInputRef.current) }, [renamingId])
 
   async function load() {
     const list = await window.api.listProjects()
@@ -86,6 +95,7 @@ export default function ProjectsScreen({ onOpen }: Props) {
                 style={styles.newInput}
                 value={newName}
                 placeholder="Project name…"
+                onFocus={selectOnFocus}
                 onChange={e => setNewName(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') handleCreate(); if (e.key === 'Escape') { setCreating(false); setNewName('') } }}
                 onBlur={handleCreate}
@@ -130,6 +140,7 @@ export default function ProjectsScreen({ onOpen }: Props) {
                     ref={renameInputRef}
                     style={styles.renameInput}
                     value={renameVal}
+                    onFocus={selectOnFocus}
                     onChange={e => setRenameVal(e.target.value)}
                     onKeyDown={e => { if (e.key === 'Enter') commitRename(proj.id); if (e.key === 'Escape') setRenamingId(null) }}
                     onBlur={() => commitRename(proj.id)}

@@ -1,0 +1,44 @@
+{
+  "capturedAt": "2026-05-13T05:38:25.339Z",
+  "environment": {
+    "platform": "win32",
+    "arch": "x64",
+    "osRelease": "10.0.26200",
+    "cpuModel": "Intel(R) Core(TM) i3-10100F CPU @ 3.60GHz",
+    "cpuCount": 8,
+    "totalMemoryMb": 24512,
+    "node": "v24.13.0",
+    "npm": "11.10.0"
+  },
+  "git": {
+    "branch": "plan/native-gpu-editor",
+    "commit": "ae5281b15045e7ecb160f649c51a81cfe9cead09"
+  },
+  "source": {
+    "tsFiles": 24,
+    "rendererComponentFiles": 8,
+    "relativeExportRenderer": "src\\renderer\\src\\utils\\exportRenderer.ts"
+  },
+  "exportImplementation": {
+    "exportModalUsesCanvasRenderer": true,
+    "canvasRendererUsesFrameLoop": true,
+    "canvasRendererEncodesJpegFrames": true,
+    "canvasRendererUsesIpcFrameSend": true,
+    "mainHasDirectFfmpegExportHandler": true,
+    "mainHasFramePipeExportHandler": true,
+    "framePipePresetMedium": true
+  },
+  "build": {
+    "attempted": true,
+    "success": true,
+    "exitCode": 0,
+    "error": null,
+    "durationMs": 2617,
+    "stdoutTail": "\n> can-cut@1.0.0 build\n> electron-vite build\n\n\u001b[36mvite v5.4.21 \u001b[32mbuilding SSR bundle for production...\u001b[36m\u001b[39m\ntransforming...\n\u001b[32m✓\u001b[39m 1 modules transformed.\nrendering chunks...\n\u001b[2mout/main/\u001b[22m\u001b[36mindex.js  \u001b[39m\u001b[1m\u001b[2m17.58 kB\u001b[22m\u001b[1m\u001b[22m\n\u001b[32m✓ built in 170ms\u001b[39m\n\u001b[36mvite v5.4.21 \u001b[32mbuilding SSR bundle for production...\u001b[36m\u001b[39m\ntransforming...\n\u001b[32m✓\u001b[39m 1 modules transformed.\nrendering chunks...\n\u001b[2mout/preload/\u001b[22m\u001b[36mindex.js  \u001b[39m\u001b[1m\u001b[2m1.44 kB\u001b[22m\u001b[1m\u001b[22m\n\u001b[32m✓ built in 15ms\u001b[39m\n\u001b[36mvite v5.4.21 \u001b[32mbuilding for production...\u001b[36m\u001b[39m\ntransforming...\n\u001b[32m✓\u001b[39m 62 modules transformed.\nrendering chunks...\n\u001b[2m../../out/renderer/\u001b[22m\u001b[32mindex.html                \u001b[39m\u001b[1m\u001b[2m  0.80 kB\u001b[22m\u001b[1m\u001b[22m\n\u001b[2m../../out/renderer/\u001b[22m\u001b[36massets/index-DTaO_9ZS.js  \u001b[39m\u001b[1m\u001b[2m480.61 kB\u001b[22m\u001b[1m\u001b[22m\n\u001b[32m✓ built in 1.27s\u001b[39m\n",
+    "stderrTail": ""
+  },
+  "manualExportBenchmarks": {
+    "captured": false,
+    "reason": "Requires interactive Electron export fixture and output path selection."
+  }
+}

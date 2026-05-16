@@ -1,0 +1,89 @@
+import { buildNativeExportOptions, type NativeExportOptions, type RenderBackend } from '../editor-core/exportPlanning'
+import { buildExportPreflight, type ExportPreflight } from '../editor-core/exportPreflight'
+import { DEFAULT_EXPORT_PROFILE, type ExportProfile } from '../editor-core/exportSettings'
+import { createHybridExportPlan, type HybridExportPlan } from '../editor-core/hybridExportPlanning'
+import { getExportMediaPaths, type ExportValidationReport } from '../editor-core/exportValidation'
+import type { RenderPlan } from '../editor-core/renderPlan'
+import { createRenderCacheDescriptor, createRenderCacheKey } from './renderCache'
+import type { ExportTraceMetrics } from './renderEngine'
+
+export type ExportJobMode = 'native' | 'renderer' | 'hybrid'
+export type ExportJobStatus = 'queued' | 'running' | 'canceling' | 'completed' | 'failed' | 'canceled' | 'interrupted'
+
+export interface ExportJob {
+  id: string
+  plan: RenderPlan
+  backend: RenderBackend
+  mode: ExportJobMode
+  profile: ExportProfile
+  preflight: ExportPreflight
+  validation?: ExportValidationReport
+  timing: ExportJobTiming
+  status: ExportJobStatus
+  progress: number
+  createdAt: number
+  updatedAt: number
+  error?: string
+  outputPath?: string
+}
+
+export interface ExportJobResult {
+  success?: boolean
+  path?: string
+  error?: string
+  canceled?: boolean
+  trace?: ExportTraceMetrics
+}
+
+export interface ExportJobLogEntry {
+  at: number
+  message: string
+}
+
+export interface ExportJobTiming {
+  queuedAt: number
+  startedAt?: number
+  finishedAt?: number
+  queueWaitMs?: number
+  validationMs?: number
+  exportMs?: number
+  totalMs?: number
+  frameCount: number
+  effectiveFps?: number
+}
+
+export interface ExportJobStartRequest {
+  plan: RenderPlan
+  profile: ExportProfile
+  preflight: ExportPreflight
+  nativeOptions: NativeExportOptions
+  mediaPaths: string[]
+  cacheKey?: string
+  hybridPlan?: HybridExportPlan
+}
+
+export function isTerminalExportStatus(status: ExportJobStatus): boolean {
+  return status === 'completed' || status === 'failed' || status === 'canceled' || status === 'interrupted'
+}
+
+export function createExportJobStartRequest(
+  plan: RenderPlan,
+  profile: ExportProfile = DEFAULT_EXPORT_PROFILE
+): ExportJobStartRequest {
+  const preflight = buildExportPreflight(plan, profile)
+  const hybridPlan = preflight.backend === 'hybrid'
+    ? createHybridExportPlan(plan, profile)
+    : undefined
+
+  return {
+    plan,
+    profile,
+    preflight,
+    nativeOptions: buildNativeExportOptions(plan, profile.encoder),
+    mediaPaths: getExportMediaPaths(plan),
+    cacheKey: preflight.backend === 'renderer-canvas'
+      ? createRenderCacheKey(createRenderCacheDescriptor(plan, profile, 'renderer-canvas'))
+      : undefined,
+    hybridPlan,
+  }
+}

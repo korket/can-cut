@@ -1,17 +1,21 @@
 import { useState, useRef, useEffect } from 'react'
 import { useEditorStore } from '../store/useEditorStore'
-import type { TextOverlay, Transform, Effects, Animation, AnimEffect, Transition, TransitionType, KeyframeTrack, KenBurns } from '../types'
+import type { TextOverlay, Transform, Effects, Animation, AnimEffect, Transition, TransitionType, KeyframeTrack, KenBurns, CompositeMode } from '../types'
 import { DEFAULT_TRANSFORM, DEFAULT_EFFECTS, DEFAULT_ANIMATION, DEFAULT_TRANSITION, DEFAULT_KEN_BURNS } from '../types'
 import { nanoid } from '../utils/nanoid'
 import { hasKeyframeAt, applyKeyframesToTransform, applyKeyframesToEffects } from '../utils/keyframes'
 
+function selectOnFocus(e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement>) {
+  e.currentTarget.select()
+}
+
 export default function PropertiesPanel() {
   const {
-    selectedId, timelineItems, textOverlays,
+    selectedId, setSelectedId, timelineItems, textOverlays,
     updateTimelineItem, updateTransform, updateEffects, updateAnimation, updateTransition,
     addKeyframe, removeKeyframe,
     updateTextOverlay, removeTextOverlay,
-    clips, currentTime, addTextOverlay, tool,
+    clips, currentTime, addTextOverlay, tool, videoTrackCount,
     defaultTransformEnabled, defaultTransform, setDefaultTransformEnabled, setDefaultTransform, captureDefaultTransform,
   } = useEditorStore()
 
@@ -26,25 +30,50 @@ export default function PropertiesPanel() {
     Math.abs((i.startTime + (i.trimEnd - i.trimStart)) - selectedItem.startTime) < 500
   ) : null
 
-  const clipTime = selectedItem ? Math.max(0, currentTime - selectedItem.startTime) : 0
-  const kfTracks = selectedItem?.keyframeTracks ?? []
-  const addKf    = (property: string, value: number) => addKeyframe(selectedItem!.id, property, clipTime, value)
-  const removeKf = (property: string) => removeKeyframe(selectedItem!.id, property, clipTime)
+  const isTextSelection = !!selectedOverlay
+  const clipTime = selectedItem
+    ? Math.max(0, currentTime - selectedItem.startTime)
+    : selectedOverlay
+      ? Math.max(0, currentTime - selectedOverlay.startTime)
+      : 0
+  const selectedDuration = selectedItem
+    ? selectedItem.trimEnd - selectedItem.trimStart
+    : selectedOverlay
+      ? selectedOverlay.endTime - selectedOverlay.startTime
+      : 0
+  const kfTracks = selectedItem?.keyframeTracks ?? selectedOverlay?.keyframeTracks ?? []
+  const selectedEditableId = selectedItem?.id ?? selectedOverlay?.id ?? null
+  const addKf    = (property: string, value: number) => { if (selectedEditableId) addKeyframe(selectedEditableId, property, clipTime, value) }
+  const removeKf = (property: string) => { if (selectedEditableId) removeKeyframe(selectedEditableId, property, clipTime) }
 
   function addText() {
+    const id = nanoid()
     addTextOverlay({
-      id: nanoid(), text: 'Sample Text', fontFamily: 'sans-serif',
+      id, text: 'Sample Text', fontFamily: 'sans-serif',
       fontSize: 36, color: '#ffffff', x: 100, y: 80,
+      trackIndex: Math.max(0, videoTrackCount - 1),
       startTime: currentTime, endTime: currentTime + 3000,
       bold: false, italic: false,
+      transform: { ...DEFAULT_TRANSFORM },
+      effects: { ...DEFAULT_EFFECTS },
+      animation: { ...DEFAULT_ANIMATION },
     })
+    setSelectedId(id)
   }
 
   const canCapture = !!(selectedItem && selectedClip && selectedClip.type !== 'audio')
 
   // Build tab list based on selected clip type
   const tabs: { id: string; label: string }[] = []
-  if (selectedItem && selectedClip) {
+  if (selectedOverlay) {
+    tabs.push(
+      { id: 'text',       label: 'Text'       },
+      { id: 'transform',  label: 'Transform'  },
+      { id: 'animation',  label: 'Animation'  },
+      { id: 'effects',    label: 'FX'         },
+      { id: 'clip',       label: 'Clip'       },
+    )
+  } else if (selectedItem && selectedClip) {
     if (selectedClip.type !== 'image') tabs.push({ id: 'audio',      label: 'Audio'      })
     if (selectedClip.type !== 'audio') {
       tabs.push(
@@ -60,10 +89,27 @@ export default function PropertiesPanel() {
   // Fall back to first available tab if current tab doesn't exist for this clip
   const tab = tabs.find(t => t.id === activeTab) ? activeTab : (tabs[0]?.id ?? '')
 
-  const baseT = selectedItem ? { ...DEFAULT_TRANSFORM, ...selectedItem.transform } : DEFAULT_TRANSFORM
-  const baseE = selectedItem ? { ...DEFAULT_EFFECTS,   ...selectedItem.effects   } : DEFAULT_EFFECTS
+  const baseT = selectedItem
+    ? { ...DEFAULT_TRANSFORM, ...selectedItem.transform }
+    : selectedOverlay
+      ? { ...DEFAULT_TRANSFORM, ...selectedOverlay.transform }
+      : DEFAULT_TRANSFORM
+  const baseE = selectedItem
+    ? { ...DEFAULT_EFFECTS, ...selectedItem.effects }
+    : selectedOverlay
+      ? { ...DEFAULT_EFFECTS, ...selectedOverlay.effects }
+      : DEFAULT_EFFECTS
   const effT  = kfTracks.length > 0 ? applyKeyframesToTransform(kfTracks, baseT, clipTime) : baseT
   const effE  = kfTracks.length > 0 ? applyKeyframesToEffects(kfTracks, baseE, clipTime)   : baseE
+  const updateTextTransform = (changes: Partial<Transform>) => {
+    if (selectedOverlay) updateTextOverlay(selectedOverlay.id, { transform: { ...DEFAULT_TRANSFORM, ...selectedOverlay.transform, ...changes } })
+  }
+  const updateTextEffects = (changes: Partial<Effects>) => {
+    if (selectedOverlay) updateTextOverlay(selectedOverlay.id, { effects: { ...DEFAULT_EFFECTS, ...selectedOverlay.effects, ...changes } })
+  }
+  const updateTextAnimation = (changes: Partial<Animation>) => {
+    if (selectedOverlay) updateTextOverlay(selectedOverlay.id, { animation: { ...DEFAULT_ANIMATION, ...selectedOverlay.animation, ...changes } })
+  }
 
   return (
     <div style={styles.panel}>
@@ -73,14 +119,6 @@ export default function PropertiesPanel() {
         <div style={{ padding: '10px 14px', flexShrink: 0 }}>
           <button style={styles.addTextBtn} onClick={addText}>+ Add Text</button>
         </div>
-      )}
-
-      {selectedOverlay && (
-        <TextProps
-          overlay={selectedOverlay}
-          update={c => updateTextOverlay(selectedOverlay.id, c)}
-          onDelete={() => removeTextOverlay(selectedOverlay.id)}
-        />
       )}
 
       {tabs.length > 0 && (
@@ -100,6 +138,13 @@ export default function PropertiesPanel() {
 
           {/* Tab content — scrollable */}
           <div style={styles.tabContent}>
+            {tab === 'text' && selectedOverlay && (
+              <TextProps
+                overlay={selectedOverlay}
+                update={c => updateTextOverlay(selectedOverlay.id, c)}
+              />
+            )}
+
             {tab === 'audio' && selectedItem && (
               <AudioSection
                 volume={selectedItem.volume ?? 100}
@@ -108,30 +153,32 @@ export default function PropertiesPanel() {
               />
             )}
 
-            {tab === 'transform' && selectedItem && (
+            {tab === 'transform' && (selectedItem || selectedOverlay) && (
               <>
                 <TransformSection
                   transform={baseT} effective={effT}
-                  update={c => updateTransform(selectedItem.id, c)}
+                  update={c => selectedItem ? updateTransform(selectedItem.id, c) : updateTextTransform(c)}
                   clipTime={clipTime} kfTracks={kfTracks}
                   addKf={addKf} removeKf={removeKf}
                   flat
                 />
-                <div style={{ borderTop: '1px solid #222' }}>
-                  <CropSection
-                    transform={baseT}
-                    update={c => updateTransform(selectedItem.id, c)}
-                  />
-                </div>
+                {selectedItem && (
+                  <div style={{ borderTop: '1px solid #222' }}>
+                    <CropSection
+                      transform={baseT}
+                      update={c => updateTransform(selectedItem.id, c)}
+                    />
+                  </div>
+                )}
               </>
             )}
 
-            {tab === 'animation' && selectedItem && (
+            {tab === 'animation' && (selectedItem || selectedOverlay) && (
               <>
                 <AnimationSection
-                  animation={{ ...DEFAULT_ANIMATION, ...selectedItem.animation }}
-                  clipDuration={selectedItem.trimEnd - selectedItem.trimStart}
-                  update={c => updateAnimation(selectedItem.id, c)}
+                  animation={{ ...DEFAULT_ANIMATION, ...(selectedItem ? selectedItem.animation : selectedOverlay?.animation) }}
+                  clipDuration={selectedDuration}
+                  update={c => selectedItem ? updateAnimation(selectedItem.id, c) : updateTextAnimation(c)}
                   flat
                 />
                 {selectedClip && selectedClip.type !== 'audio' && (
@@ -144,10 +191,10 @@ export default function PropertiesPanel() {
               </>
             )}
 
-            {tab === 'effects' && selectedItem && (
+            {tab === 'effects' && (selectedItem || selectedOverlay) && (
               <EffectsSection
                 effects={baseE} effective={effE}
-                update={c => updateEffects(selectedItem.id, c)}
+                update={c => selectedItem ? updateEffects(selectedItem.id, c) : updateTextEffects(c)}
                 clipTime={clipTime} kfTracks={kfTracks}
                 addKf={addKf} removeKf={removeKf}
                 flat
@@ -159,6 +206,14 @@ export default function PropertiesPanel() {
                 transition={{ ...DEFAULT_TRANSITION, ...selectedItem.transitionIn }}
                 update={c => updateTransition(selectedItem.id, c)}
                 flat
+              />
+            )}
+
+            {tab === 'clip' && selectedOverlay && (
+              <TextClipProps
+                overlay={selectedOverlay}
+                update={c => updateTextOverlay(selectedOverlay.id, c)}
+                onDelete={() => removeTextOverlay(selectedOverlay.id)}
               />
             )}
 
@@ -177,15 +232,15 @@ export default function PropertiesPanel() {
         <div style={styles.empty}>Select a clip to edit its properties</div>
       )}
 
-      {textOverlays.length > 0 && <TextList />}
-
-      <DefaultTransformSection
-        enabled={defaultTransformEnabled}
-        transform={defaultTransform}
-        onToggle={() => setDefaultTransformEnabled(!defaultTransformEnabled)}
-        onCapture={canCapture ? () => captureDefaultTransform({ ...DEFAULT_TRANSFORM, ...selectedItem!.transform }) : undefined}
-        update={setDefaultTransform}
-      />
+      {!isTextSelection && (
+        <DefaultTransformSection
+          enabled={defaultTransformEnabled}
+          transform={defaultTransform}
+          onToggle={() => setDefaultTransformEnabled(!defaultTransformEnabled)}
+          onCapture={canCapture ? () => captureDefaultTransform({ ...DEFAULT_TRANSFORM, ...selectedItem!.transform }) : undefined}
+          update={setDefaultTransform}
+        />
+      )}
     </div>
   )
 }
@@ -518,6 +573,26 @@ const SHADOW_PRESETS: Array<{ label: string; values?: { shadowOpacity: number; s
   { label: 'Deep',  values: { shadowOpacity: 75, shadowBlur: 18, shadowX: 8,  shadowY: 14 } },
 ]
 
+const COMPOSITE_MODES: Array<{ value: CompositeMode; label: string }> = [
+  { value: 'normal',      label: 'Normal'       },
+  { value: 'multiply',    label: 'Multiply'     },
+  { value: 'screen',      label: 'Screen'       },
+  { value: 'overlay',     label: 'Overlay'      },
+  { value: 'darken',      label: 'Darken'       },
+  { value: 'lighten',     label: 'Lighten'      },
+  { value: 'color-dodge', label: 'Color Dodge'  },
+  { value: 'color-burn',  label: 'Color Burn'   },
+  { value: 'hard-light',  label: 'Hard Light'   },
+  { value: 'soft-light',  label: 'Soft Light'   },
+  { value: 'difference',  label: 'Difference'   },
+  { value: 'exclusion',   label: 'Exclusion'    },
+  { value: 'hue',         label: 'Hue'          },
+  { value: 'saturation',  label: 'Saturation'   },
+  { value: 'color',       label: 'Color'        },
+  { value: 'luminosity',  label: 'Luminosity'   },
+  { value: 'add',         label: 'Add'          },
+]
+
 // ── Effects Section ───────────────────────────────────────────────────────────
 interface EffectsSectionProps {
   effects: Effects; effective: Effects
@@ -531,6 +606,7 @@ function EffectsSection({ effects: base, effective: e, update, clipTime, kfTrack
   const hasEffect = base.brightness !== 100 || base.contrast !== 100 || base.saturate !== 100 ||
                     base.hue !== 0 || base.blur !== 0 || base.opacity !== 100 ||
                     base.grayscale !== 0 || base.sepia !== 0 || base.shadowOpacity > 0 || base.backdropBlur > 0 ||
+                    base.compositeMode !== 'normal' ||
                     kfTracks.some(t =>
                       ['brightness','contrast','saturate','hue','blur','opacity','grayscale','sepia'].includes(t.property))
 
@@ -554,12 +630,27 @@ function EffectsSection({ effects: base, effective: e, update, clipTime, kfTrack
       <TRow label="Grayscale"  min={0}    max={100} step={1}   value={e.grayscale}  unit="%"  onChange={v => ch('grayscale',  v)} onReset={() => update({ grayscale: 0 })}    kf={kf('grayscale',  e.grayscale)}  />
       <TRow label="Sepia"      min={0}    max={100} step={1}   value={e.sepia}      unit="%"  onChange={v => ch('sepia',      v)} onReset={() => update({ sepia: 0 })}        kf={kf('sepia',      e.sepia)}      />
 
+      <div style={{ ...styles.animSelectRow, gridColumn: 'span 2', borderTop: '1px solid #242424', marginTop: 4, paddingTop: 10 }}>
+        <span style={{ ...styles.tLabel, color: base.compositeMode !== 'normal' ? '#e6a030' : '#aaa' }}>Composite</span>
+        <select
+          value={base.compositeMode}
+          onChange={ev => update({ compositeMode: ev.target.value as CompositeMode })}
+          style={styles.animSelect}
+          title="Layer composite mode"
+        >
+          {COMPOSITE_MODES.map(mode => <option key={mode.value} value={mode.value}>{mode.label}</option>)}
+        </select>
+      </div>
+
       {/* Backdrop Blur */}
       <div style={{ gridColumn: 'span 2', borderTop: '1px solid #242424', marginTop: 4, paddingTop: 10 }}>
         <span style={{ fontSize: 11, fontWeight: 700, color: base.backdropBlur > 0 ? '#e6a030' : '#666', letterSpacing: 0.8, display: 'block', marginBottom: 6 }}>BACKDROP BLUR</span>
         <TRow label="Amount" min={0} max={30} step={0.5} value={e.backdropBlur} unit="px" onChange={v => update({ backdropBlur: v })} onReset={() => update({ backdropBlur: 0 })} kf={{ active: false, toggle: () => {} }} />
         {base.backdropBlur > 0 && (
-          <TRow label="Fade" min={0} max={3000} step={50} value={e.backdropBlurFade} unit="ms" onChange={v => update({ backdropBlurFade: v })} onReset={() => update({ backdropBlurFade: 600 })} kf={{ active: false, toggle: () => {} }} />
+          <>
+            <TRow label="Background" min={0} max={100} step={1} value={e.backdropOpacity} unit="%" onChange={v => update({ backdropOpacity: v })} onReset={() => update({ backdropOpacity: 100 })} kf={{ active: false, toggle: () => {} }} />
+            <TRow label="Fade" min={0} max={3000} step={50} value={e.backdropBlurFade} unit="ms" onChange={v => update({ backdropBlurFade: v })} onReset={() => update({ backdropBlurFade: 600 })} kf={{ active: false, toggle: () => {} }} />
+          </>
         )}
       </div>
 
@@ -821,6 +912,7 @@ function DragNumber({ value, min, max, step, speed = 1, onChange }: {
         value={editVal}
         autoFocus
         style={styles.tNum}
+        onFocus={selectOnFocus}
         onChange={e => setEditVal(e.target.value)}
         onBlur={() => {
           const v = parseFloat(editVal)
@@ -966,16 +1058,146 @@ function AnimationSection({ animation: a, clipDuration, update, flat }: {
 }
 
 // ── Text overlay properties ───────────────────────────────────────────────────
-function TextProps({ overlay, update, onDelete }: {
+const FALLBACK_TITLE_FONTS = ['sans-serif', 'serif', 'monospace']
+let cachedSystemFonts: string[] | null = null
+
+async function loadSystemFonts(): Promise<string[]> {
+  if (cachedSystemFonts) return cachedSystemFonts
+
+  try {
+    const fonts = await window.api.listSystemFonts()
+    cachedSystemFonts = fonts.length > 0 ? fonts : FALLBACK_TITLE_FONTS
+  } catch {
+    cachedSystemFonts = FALLBACK_TITLE_FONTS
+  }
+
+  return cachedSystemFonts
+}
+
+function TextProps({ overlay, update }: {
   overlay: TextOverlay
   update: (c: Partial<TextOverlay>) => void
-  onDelete: () => void
 }) {
+  const setTitleFontPreview = useEditorStore(s => s.setTitleFontPreview)
+  const fontFamily = overlay.fontFamily || 'sans-serif'
+  const [systemFonts, setSystemFonts] = useState(cachedSystemFonts ?? FALLBACK_TITLE_FONTS)
+  const [fontQuery, setFontQuery] = useState(fontFamily)
+  const [fontMenuOpen, setFontMenuOpen] = useState(false)
+  const selectingFontRef = useRef(false)
+
+  useEffect(() => {
+    return () => setTitleFontPreview(null)
+  }, [overlay.id, setTitleFontPreview])
+
+  useEffect(() => {
+    let cancelled = false
+    loadSystemFonts().then(fonts => {
+      if (!cancelled) setSystemFonts(fonts)
+    })
+    return () => { cancelled = true }
+  }, [])
+
+  useEffect(() => {
+    if (!fontMenuOpen) setFontQuery(fontFamily)
+  }, [fontFamily, fontMenuOpen])
+
+  const fontOptions = systemFonts.some(font => font.toLocaleLowerCase() === fontFamily.toLocaleLowerCase())
+    ? systemFonts
+    : [fontFamily, ...systemFonts]
+  const fontSearch = fontQuery.trim().toLocaleLowerCase()
+  const visibleFonts = fontSearch
+    ? fontOptions.filter(font => font.toLocaleLowerCase().includes(fontSearch))
+    : fontOptions
+
+  function applyFont(next: string) {
+    const family = next.trim()
+    if (!family) {
+      setFontQuery(fontFamily)
+      return
+    }
+    setTitleFontPreview(null)
+    update({ fontFamily: family })
+    setFontQuery(family)
+    setFontMenuOpen(false)
+  }
+
+  function previewFont(next: string) {
+    const family = next.trim()
+    if (!family) return
+    setTitleFontPreview({ overlayId: overlay.id, fontFamily: family })
+  }
+
+  function clearFontPreview() {
+    setTitleFontPreview(null)
+  }
+
   return (
     <div style={styles.section}>
       <div style={styles.sectionTitle}>Text</div>
       <label style={styles.label}>Content</label>
-      <textarea style={styles.textarea} value={overlay.text} onChange={e => update({ text: e.target.value })} rows={2} />
+      <textarea style={styles.textarea} value={overlay.text} onFocus={selectOnFocus} onChange={e => update({ text: e.target.value })} rows={2} />
+
+      <label style={styles.label}>Font</label>
+      <div style={styles.fontPicker}>
+        <input
+          value={fontMenuOpen ? fontQuery : fontFamily}
+          onFocus={() => {
+            clearFontPreview()
+            setFontMenuOpen(true)
+            setFontQuery('')
+          }}
+          onChange={e => setFontQuery(e.target.value)}
+          onBlur={() => {
+            setTimeout(() => {
+              if (selectingFontRef.current) {
+                selectingFontRef.current = false
+                return
+              }
+              clearFontPreview()
+              if (fontQuery.trim()) applyFont(fontQuery)
+              else setFontQuery(fontFamily)
+              setFontMenuOpen(false)
+            }, 120)
+          }}
+          onKeyDown={e => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              applyFont(visibleFonts[0] ?? fontQuery)
+            } else if (e.key === 'Escape') {
+              clearFontPreview()
+              setFontQuery(fontFamily)
+              setFontMenuOpen(false)
+            }
+            e.stopPropagation()
+          }}
+          placeholder="Search fonts"
+          style={styles.input}
+        />
+        {fontMenuOpen && (
+          <div style={styles.fontMenu} onMouseLeave={clearFontPreview}>
+            {(visibleFonts.length > 0 ? visibleFonts : [fontQuery]).map(font => (
+              <button
+                key={font}
+                type="button"
+                style={{
+                  ...styles.fontOption,
+                  ...(font.toLocaleLowerCase() === fontFamily.toLocaleLowerCase() ? styles.fontOptionActive : {}),
+                }}
+                onMouseEnter={() => previewFont(font)}
+                onFocus={() => previewFont(font)}
+                onMouseDown={e => {
+                  selectingFontRef.current = true
+                  e.preventDefault()
+                  applyFont(font)
+                }}
+                title={font}
+              >
+                <span style={{ ...styles.fontOptionName, fontFamily: font }}>{font}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
 
       <label style={styles.label}>Font Size</label>
       <div style={styles.row}>
@@ -993,17 +1215,27 @@ function TextProps({ overlay, update, onDelete }: {
         <input type="checkbox" checked={overlay.italic} onChange={e => update({ italic: e.target.checked })} />
       </div>
 
-      <label style={styles.label}>Position X</label>
-      <input type="number" value={overlay.x} onChange={e => update({ x: +e.target.value })} style={styles.input} />
-      <label style={styles.label}>Position Y</label>
-      <input type="number" value={overlay.y} onChange={e => update({ y: +e.target.value })} style={styles.input} />
+    </div>
+  )
+}
+
+function TextClipProps({ overlay, update, onDelete }: {
+  overlay: TextOverlay
+  update: (c: Partial<TextOverlay>) => void
+  onDelete: () => void
+}) {
+  return (
+    <div style={styles.section}>
+      <div style={styles.sectionTitle}>Title Clip</div>
+      <label style={styles.label}>Video Track</label>
+      <input type="number" min={1} value={overlay.trackIndex + 1} onFocus={selectOnFocus} onChange={e => update({ trackIndex: Math.max(0, +e.target.value - 1) })} style={styles.input} />
 
       <label style={styles.label}>Start (ms)</label>
-      <input type="number" value={overlay.startTime} onChange={e => update({ startTime: +e.target.value })} style={styles.input} />
+      <input type="number" value={overlay.startTime} onFocus={selectOnFocus} onChange={e => update({ startTime: Math.max(0, Math.min(+e.target.value, overlay.endTime - 1)) })} style={styles.input} />
       <label style={styles.label}>End (ms)</label>
-      <input type="number" value={overlay.endTime} onChange={e => update({ endTime: +e.target.value })} style={styles.input} />
+      <input type="number" value={overlay.endTime} onFocus={selectOnFocus} onChange={e => update({ endTime: Math.max(overlay.startTime + 1, +e.target.value) })} style={styles.input} />
 
-      <button style={styles.deleteBtn} onClick={onDelete}>Delete Text</button>
+      <button style={styles.deleteBtn} onClick={onDelete}>Delete Title</button>
     </div>
   )
 }
@@ -1020,29 +1252,10 @@ function ClipProps({ item, clip, update }: {
         Clip — <span style={{ color: '#bbb', fontWeight: 400 }}>{clip.name}</span>
       </div>
       <label style={styles.label}>Trim Start (ms)</label>
-      <input type="number" value={item.trimStart} min={0} max={item.trimEnd - 1} onChange={e => update({ trimStart: +e.target.value })} style={styles.input} />
+      <input type="number" value={item.trimStart} min={0} max={item.trimEnd - 1} onFocus={selectOnFocus} onChange={e => update({ trimStart: +e.target.value })} style={styles.input} />
       <label style={styles.label}>Trim End (ms)</label>
-      <input type="number" value={item.trimEnd} min={item.trimStart + 1} max={clip.duration} onChange={e => update({ trimEnd: +e.target.value })} style={styles.input} />
+      <input type="number" value={item.trimEnd} min={item.trimStart + 1} max={clip.duration} onFocus={selectOnFocus} onChange={e => update({ trimEnd: +e.target.value })} style={styles.input} />
       <div style={styles.info}>Duration: {((item.trimEnd - item.trimStart) / 1000).toFixed(2)}s</div>
-    </div>
-  )
-}
-
-function TextList() {
-  const { textOverlays, setSelectedId, selectedId, removeTextOverlay } = useEditorStore()
-  return (
-    <div style={{ flexShrink: 0 }}>
-      <div style={{ ...styles.sectionTitle, padding: '10px 16px 6px', borderTop: '1px solid #1e1e1e' }}>Text Layers</div>
-      {textOverlays.map(o => (
-        <div
-          key={o.id}
-          style={{ ...styles.overlayRow, background: selectedId === o.id ? '#2a2a2a' : 'transparent' }}
-          onClick={() => setSelectedId(o.id)}
-        >
-          <span style={styles.overlayText}>{o.text.slice(0, 20)}</span>
-          <button style={styles.smallBtn} onClick={e => { e.stopPropagation(); removeTextOverlay(o.id) }}>×</button>
-        </div>
-      ))}
     </div>
   )
 }
@@ -1086,6 +1299,11 @@ const styles: Record<string, React.CSSProperties> = {
 
   label:       { fontSize: 12, color: '#aaa', padding: '7px 14px 2px', display: 'block' },
   input:       { background: '#1e1e1e', border: '1px solid #2c2c2c', color: '#ddd', borderRadius: 4, padding: '6px 10px', fontSize: 13, margin: '0 14px 6px', display: 'block', width: 'calc(100% - 28px)', boxSizing: 'border-box' },
+  fontPicker:  { position: 'relative' },
+  fontMenu:    { maxHeight: 210, overflowY: 'auto', margin: '-3px 14px 8px', border: '1px solid #333', borderRadius: 4, background: '#151515', boxShadow: '0 8px 18px rgba(0,0,0,0.35)', padding: 3 },
+  fontOption:  { display: 'block', width: '100%', background: 'transparent', border: 'none', color: '#ccc', textAlign: 'left', padding: '6px 8px', borderRadius: 3, cursor: 'pointer', fontSize: 12 },
+  fontOptionActive: { background: '#2a1620', color: '#fff' },
+  fontOptionName: { display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   textarea:    { background: '#1e1e1e', border: '1px solid #2c2c2c', color: '#ddd', borderRadius: 4, padding: '6px 10px', fontSize: 13, resize: 'vertical', margin: '0 14px 6px', display: 'block', width: 'calc(100% - 28px)', boxSizing: 'border-box' },
   range:       { flex: 1, accentColor: '#e63950', height: 18 },
   value:       { fontSize: 12, color: '#666' },
@@ -1098,7 +1316,4 @@ const styles: Record<string, React.CSSProperties> = {
   kbPresetBtn:       { background: '#1a1a24', border: '1px solid #2e2e3e', color: '#aaa', padding: '5px 9px', borderRadius: 4, cursor: 'pointer', fontSize: 11 },
   kbPresetBtnActive: { background: '#2d1560', border: '1px solid #7040e0', color: '#c0a0ff' },
   kbGroupLabel:{ fontSize: 11, color: '#888', fontWeight: 700, letterSpacing: 0.8, paddingBottom: 3, marginTop: 4 },
-  overlayRow:  { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 14px', cursor: 'pointer', borderRadius: 4, margin: '2px 4px' },
-  overlayText: { fontSize: 12, color: '#ccc' },
-  smallBtn:    { background: 'none', border: 'none', color: '#888', cursor: 'pointer', fontSize: 15 },
 }

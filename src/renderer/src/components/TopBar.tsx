@@ -1,11 +1,13 @@
 import { useEditorStore } from '../store/useEditorStore'
 import { useHistoryStore } from '../store/useHistoryStore'
 import { useShortcutsStore, formatShortcut } from '../store/useShortcutsStore'
-import type { Tool } from '../types'
+import { DEFAULT_ANIMATION, DEFAULT_EFFECTS, DEFAULT_TRANSFORM, type Tool } from '../types'
+import { nanoid } from '../utils/nanoid'
 
 interface Props {
   onExport: () => void
   onShortcuts: () => void
+  onVersions: () => void
   onBack: () => void
   projectName: string
 }
@@ -17,13 +19,38 @@ const tools: { id: Tool; label: string; icon: string; shortcutId: string }[] = [
 
 const FPS_OPTIONS = [23.976, 24, 25, 29.97, 30, 50, 59.94, 60]
 
-export default function TopBar({ onExport, onShortcuts, onBack, projectName }: Props) {
-  const { tool, setTool, fps, setFps } = useEditorStore()
+export default function TopBar({ onExport, onShortcuts, onVersions, onBack, projectName }: Props) {
+  const { tool, setTool, fps, setFps, addTextOverlay, currentTime, videoTrackCount, setSelectedId } = useEditorStore()
   const shortcuts = useShortcutsStore((s) => s.shortcuts)
   const sc = (id: string) => shortcuts.find((s) => s.id === id)
   const canUndo = useHistoryStore((s) => s.past.length > 0)
   const canRedo = useHistoryStore((s) => s.future.length > 0)
   const { undo, redo } = useHistoryStore()
+
+  function selectTool(nextTool: Tool) {
+    setTool(nextTool)
+    if (nextTool !== 'text') return
+
+    const id = nanoid()
+    addTextOverlay({
+      id,
+      text: 'Sample Text',
+      fontFamily: 'sans-serif',
+      fontSize: 48,
+      color: '#ffffff',
+      x: 760,
+      y: 500,
+      trackIndex: Math.max(0, videoTrackCount - 1),
+      startTime: currentTime,
+      endTime: currentTime + 3000,
+      bold: false,
+      italic: false,
+      transform: { ...DEFAULT_TRANSFORM },
+      effects: { ...DEFAULT_EFFECTS },
+      animation: { ...DEFAULT_ANIMATION },
+    })
+    setSelectedId(id)
+  }
 
   return (
     <div style={styles.bar}>
@@ -43,7 +70,7 @@ export default function TopBar({ onExport, onShortcuts, onBack, projectName }: P
           return (
             <button
               key={t.id}
-              onClick={() => setTool(t.id)}
+              onClick={() => selectTool(t.id)}
               style={{ ...styles.toolBtn, ...(tool === t.id ? styles.toolActive : {}) }}
               title={shortcut ? formatShortcut(shortcut) : t.label}
             >
@@ -64,6 +91,7 @@ export default function TopBar({ onExport, onShortcuts, onBack, projectName }: P
             <option key={f} value={f}>{f} fps</option>
           ))}
         </select>
+        <button style={styles.shortcutsBtn} onClick={onVersions}>Versions</button>
         <button style={styles.shortcutsBtn} onClick={onShortcuts}>Shortcuts</button>
         <button style={styles.exportBtn} onClick={onExport} title={sc('export') ? formatShortcut(sc('export')!) : 'Export'}>
           Export
